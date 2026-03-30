@@ -107,6 +107,8 @@ class VideoAnalyticsPipeline:
         self._display_overlay_version = -1
         self._template_persist_interval_seconds = max(1, settings.reid_persist_interval_seconds)
         self._last_template_persist_ts = 0.0
+        self._actual_width: int = 0
+        self._actual_height: int = 0
 
     def start(self) -> None:
         self._publish_placeholder_frame("正在启动视频服务…")
@@ -138,6 +140,17 @@ class VideoAnalyticsPipeline:
                     b"Content-Type: image/jpeg\r\n\r\n" + self._latest_frame + b"\r\n"
                 )
             time.sleep(0.03)
+
+    def get_capture_info(self) -> dict:
+        return {
+            "requested_width": settings.camera_width,
+            "requested_height": settings.camera_height,
+            "actual_width": self._actual_width,
+            "actual_height": self._actual_height,
+            "mjpeg_quality": settings.mjpeg_quality,
+            "capture_status": self.stats.capture_status,
+            "capture_backend": self.stats.capture_backend,
+        }
 
     def _capture_loop(self) -> None:
         cap: cv2.VideoCapture | None = None
@@ -183,6 +196,9 @@ class VideoAnalyticsPipeline:
             corrupted_reads = 0
             self.stats.capture_status = "running"
             self._capture_error = ""
+            h, w = frame.shape[:2]
+            self._actual_width = w
+            self._actual_height = h
             
             # Lightweight render in capture loop for smooth display
             ts_ms = int(time.time() * 1000)
@@ -190,7 +206,7 @@ class VideoAnalyticsPipeline:
                 cur_tracks = list(self._overlay_tracks)
                 cur_notes = dict(self._overlay_notes)
             rendered = self._render_fast(frame, cur_tracks, ts_ms, cur_notes)
-            ok_enc, buf = cv2.imencode(".jpg", rendered, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            ok_enc, buf = cv2.imencode(".jpg", rendered, [int(cv2.IMWRITE_JPEG_QUALITY), settings.mjpeg_quality])
             if ok_enc:
                 self._latest_frame = bytes(buf)
             
@@ -566,10 +582,8 @@ class VideoAnalyticsPipeline:
                 fourcc_fn = getattr(cv2, "VideoWriter_fourcc", None)
                 if callable(fourcc_fn):
                     cap.set(cv2.CAP_PROP_FOURCC, fourcc_fn(*"MJPG"))
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 3840)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 2160)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, settings.camera_width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, settings.camera_height)
                 return cap
             self.stats.capture_backend = "AUTO"
             return cv2.VideoCapture(index)

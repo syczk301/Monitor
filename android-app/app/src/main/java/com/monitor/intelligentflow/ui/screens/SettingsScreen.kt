@@ -127,7 +127,7 @@ fun SettingsScreen(
             onValueChange = { baseUrl = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("服务器地址") },
-            placeholder = { Text("http://10.x.x.x:8000") },
+            placeholder = { Text("10.x.x.x:8000") },
             leadingIcon = { Icon(Icons.Rounded.Wifi, null, Modifier.size(20.dp)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -167,7 +167,13 @@ fun SettingsScreen(
         Spacer(Modifier.height(32.dp))
 
         Button(
-            onClick = { onSave(baseUrl, username, password) },
+            onClick = {
+                val url = baseUrl.trim().let {
+                    if (it.isNotEmpty() && !it.startsWith("http://") && !it.startsWith("https://"))
+                        "http://$it" else it
+                }
+                onSave(url, username, password)
+            },
             enabled = !uiState.isChecking && baseUrl.isNotBlank(),
             modifier = Modifier
                 .fillMaxWidth()

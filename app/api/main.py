@@ -131,6 +131,11 @@ def bulk_delete_visits(payload: BulkDeletePayload) -> dict:
     return {"ok": True, "deleted_count": count}
 
 
+@router.get("/capture_info")
+def capture_info() -> dict:
+    return services.pipeline.get_capture_info()
+
+
 @router.get("/reports/daily")
 def report_daily() -> dict:
     return services.reports.generate_daily()

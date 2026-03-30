@@ -94,6 +94,9 @@ class Settings(BaseModel):
     tracker_low_conf_iou_threshold: float = 0.16
     tracker_display_max_missed: int = 3
     tracker_min_confirmed_hits: int = 2
+    camera_width: int = int(os.getenv("CAMERA_WIDTH", "3840"))
+    camera_height: int = int(os.getenv("CAMERA_HEIGHT", "2160"))
+    mjpeg_quality: int = int(os.getenv("MJPEG_QUALITY", "92"))
     frame_queue_size: int = 1
     result_queue_size: int = 32
     feature_dim: int = Field(default=128, ge=64, le=512)

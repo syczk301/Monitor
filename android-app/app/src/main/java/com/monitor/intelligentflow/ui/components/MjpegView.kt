@@ -30,8 +30,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,13 +46,24 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+
+private const val AI_ZOOM_THRESHOLD = 1.5f
+private const val AI_REFRESH_MS = 200L
+private const val AI_DEBOUNCE_MS = 120L
+private const val MAX_SR_INPUT = 480
 
 @Composable
 fun MjpegView(
@@ -62,9 +75,19 @@ fun MjpegView(
 ) {
     var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+
+    val superRes = remember { SuperResolution() }
+    var enhancedFrame by remember { mutableStateOf<Bitmap?>(null) }
+    var aiActive by remember { mutableStateOf(false) }
+    var containerW by remember { mutableIntStateOf(0) }
+    var containerH by remember { mutableIntStateOf(0) }
+    var gestureVersion by remember { mutableIntStateOf(0) }
+
+    DisposableEffect(Unit) {
+        onDispose { superRes.release() }
+    }
 
     DisposableEffect(streamUrl) {
         val running = AtomicBoolean(true)
@@ -128,23 +151,56 @@ fun MjpegView(
         onDispose { running.set(false); thread.interrupt() }
     }
 
+    LaunchedEffect(gestureVersion, superRes.isAvailable) {
+        if (!superRes.isAvailable) return@LaunchedEffect
+        delay(AI_DEBOUNCE_MS)
+        if (scale <= AI_ZOOM_THRESHOLD) {
+            enhancedFrame = null
+            aiActive = false
+            return@LaunchedEffect
+        }
+        while (true) {
+            val frame = currentFrame
+            if (frame != null && containerW > 0 && scale > AI_ZOOM_THRESHOLD) {
+                val s = scale
+                val o = offset
+                val cw = containerW
+                val ch = containerH
+                val fs = isFullscreen
+                val result = withContext(Dispatchers.Default) {
+                    cropAndUpscale(frame, s, o, cw, ch, fs, superRes)
+                }
+                enhancedFrame = result
+                aiActive = result != null
+            } else {
+                enhancedFrame = null
+                aiActive = false
+                if (scale <= AI_ZOOM_THRESHOLD) return@LaunchedEffect
+            }
+            delay(AI_REFRESH_MS)
+        }
+    }
+
     val containerModifier = if (isFullscreen) {
         modifier.fillMaxSize().background(Color.Black)
     } else {
         modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color.Black)
     }
 
-    Box(modifier = containerModifier, contentAlignment = Alignment.Center) {
+    Box(
+        modifier = containerModifier.onSizeChanged {
+            containerW = it.width
+            containerH = it.height
+        },
+        contentAlignment = Alignment.Center
+    ) {
         val frame = currentFrame
 
         AnimatedVisibility(visible = frame != null, enter = fadeIn(), exit = fadeOut()) {
             if (frame != null) {
                 Box(
                     modifier = Modifier
-                        .then(
-                            if (isFullscreen) Modifier.fillMaxSize()
-                            else Modifier.fillMaxWidth()
-                        )
+                        .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
                         .pointerInput(Unit) {
                             detectTransformGestures { _, pan, zoom, _ ->
                                 val newScale = (scale * zoom).coerceIn(1f, 5f)
@@ -159,6 +215,8 @@ fun MjpegView(
                                     )
                                 }
                                 scale = newScale
+                                enhancedFrame = null
+                                gestureVersion++
                             }
                         }
                         .pointerInput(Unit) {
@@ -170,6 +228,8 @@ fun MjpegView(
                                     } else {
                                         scale = 2.5f
                                     }
+                                    enhancedFrame = null
+                                    gestureVersion++
                                 }
                             )
                         }
@@ -178,10 +238,7 @@ fun MjpegView(
                         bitmap = frame.asImageBitmap(),
                         contentDescription = "live stream",
                         modifier = Modifier
-                            .then(
-                                if (isFullscreen) Modifier.fillMaxSize()
-                                else Modifier.fillMaxWidth()
-                            )
+                            .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
                             .graphicsLayer(
                                 scaleX = scale,
                                 scaleY = scale,
@@ -190,6 +247,16 @@ fun MjpegView(
                             ),
                         contentScale = if (isFullscreen) ContentScale.Fit else ContentScale.FillWidth
                     )
+
+                    val enhanced = enhancedFrame
+                    if (enhanced != null && scale > AI_ZOOM_THRESHOLD) {
+                        Image(
+                            bitmap = enhanced.asImageBitmap(),
+                            contentDescription = "AI enhanced",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
                 }
             }
         }
@@ -225,10 +292,31 @@ fun MjpegView(
             }
         }
 
+        AnimatedVisibility(
+            visible = aiActive,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Text(
+                "AI",
+                modifier = Modifier
+                    .background(Color(0xFF4CAF50).copy(alpha = 0.85f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         IconButton(
             onClick = {
                 scale = 1f
                 offset = Offset.Zero
+                enhancedFrame = null
+                gestureVersion++
                 onToggleFullscreen()
             },
             modifier = Modifier
@@ -247,4 +335,59 @@ fun MjpegView(
             )
         }
     }
+}
+
+private fun cropAndUpscale(
+    frame: Bitmap,
+    scale: Float,
+    offset: Offset,
+    containerW: Int,
+    containerH: Int,
+    isFullscreen: Boolean,
+    superRes: SuperResolution
+): Bitmap? {
+    val bw = frame.width.toFloat()
+    val bh = frame.height.toFloat()
+    val cw = containerW.toFloat()
+    val ch = containerH.toFloat()
+    if (bw <= 0 || bh <= 0 || cw <= 0 || ch <= 0) return null
+
+    val displayScale = if (isFullscreen) minOf(cw / bw, ch / bh) else cw / bw
+    val displayedW = bw * displayScale
+    val displayedH = bh * displayScale
+    val imgOffX = (cw - displayedW) / 2f
+    val imgOffY = (ch - displayedH) / 2f
+
+    val visCenterX = cw / 2f - offset.x / scale
+    val visCenterY = ch / 2f - offset.y / scale
+    val visW = cw / scale
+    val visH = ch / scale
+
+    val bmpCX = (visCenterX - imgOffX) / displayScale
+    val bmpCY = (visCenterY - imgOffY) / displayScale
+    val bmpW = visW / displayScale
+    val bmpH = visH / displayScale
+
+    var left = (bmpCX - bmpW / 2f).toInt().coerceIn(0, frame.width - 1)
+    var top = (bmpCY - bmpH / 2f).toInt().coerceIn(0, frame.height - 1)
+    var right = (bmpCX + bmpW / 2f).toInt().coerceIn(left + 1, frame.width)
+    var bottom = (bmpCY + bmpH / 2f).toInt().coerceIn(top + 1, frame.height)
+
+    val cropW = right - left
+    val cropH = bottom - top
+    if (cropW < 16 || cropH < 16) return null
+
+    var cropped = Bitmap.createBitmap(frame, left, top, cropW, cropH)
+    val maxDim = maxOf(cropW, cropH)
+    if (maxDim > MAX_SR_INPUT) {
+        val s = MAX_SR_INPUT.toFloat() / maxDim
+        cropped = Bitmap.createScaledBitmap(
+            cropped,
+            (cropW * s).toInt().coerceAtLeast(1),
+            (cropH * s).toInt().coerceAtLeast(1),
+            true
+        )
+    }
+
+    return superRes.upscale(cropped)
 }
