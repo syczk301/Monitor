@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -86,17 +87,22 @@ fun MonitorScreen(
         }
     }
 
-    // Always render a single MjpegView inside a Box that changes size,
-    // so the stream thread is never destroyed/recreated on fullscreen toggle.
-    Box(modifier = if (isFullscreen) Modifier.fillMaxSize().background(Color.Black) else modifier.fillMaxSize()) {
-        if (isFullscreen) {
+    val mjpegContent = remember {
+        movableContentOf {
             MjpegView(
                 streamUrl = api.streamUrl(),
                 authHeader = api.streamAuthHeader(),
-                isFullscreen = true,
-                onToggleFullscreen = { exitFullscreen() },
-                modifier = Modifier.fillMaxSize()
+                isFullscreen = isFullscreen,
+                onToggleFullscreen = { if (isFullscreen) exitFullscreen() else enterFullscreen() },
+                modifier = if (isFullscreen) Modifier.fillMaxSize()
+                else Modifier.clip(RoundedCornerShape(20.dp))
             )
+        }
+    }
+
+    Box(modifier = if (isFullscreen) Modifier.fillMaxSize().background(Color.Black) else modifier.fillMaxSize()) {
+        if (isFullscreen) {
+            mjpegContent()
         } else {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 Box(
@@ -108,13 +114,7 @@ fun MonitorScreen(
                         .background(MaterialTheme.colorScheme.surface)
                         .padding(4.dp)
                 ) {
-                    MjpegView(
-                        streamUrl = api.streamUrl(),
-                        authHeader = api.streamAuthHeader(),
-                        isFullscreen = false,
-                        onToggleFullscreen = { enterFullscreen() },
-                        modifier = Modifier.clip(RoundedCornerShape(20.dp))
-                    )
+                    mjpegContent()
                 }
 
                 Spacer(Modifier.height(24.dp))

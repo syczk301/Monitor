@@ -109,6 +109,10 @@ class VideoAnalyticsPipeline:
         self._last_template_persist_ts = 0.0
         self._actual_width: int = 0
         self._actual_height: int = 0
+        self._client_count = 0
+        self._client_lock = threading.Lock()
+        self._idle_timer: threading.Timer | None = None
+        self._idle_timeout_seconds = 15
 
     def start(self) -> None:
         self._publish_placeholder_frame("正在启动视频服务…")
@@ -129,8 +133,36 @@ class VideoAnalyticsPipeline:
     def stop(self) -> None:
         self._stop_event.set()
         for thread in (self._capture_thread, self._inference_thread, self._record_thread):
-            thread.join(timeout=2)
+            if thread.is_alive():
+                thread.join(timeout=2)
         self._persist_identity_templates(force=True)
+
+    def acquire(self) -> None:
+        with self._client_lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            self._client_count += 1
+            if self._client_count == 1:
+                self.start()
+
+    def release(self) -> None:
+        with self._client_lock:
+            self._client_count = max(0, self._client_count - 1)
+            if self._client_count == 0:
+                self._idle_timer = threading.Timer(self._idle_timeout_seconds, self._idle_shutdown)
+                self._idle_timer.daemon = True
+                self._idle_timer.start()
+
+    def _idle_shutdown(self) -> None:
+        with self._client_lock:
+            if self._client_count == 0:
+                self.stop()
+                self._publish_placeholder_frame("等待客户端连接...")
+
+    @property
+    def latest_frame(self) -> bytes:
+        return self._latest_frame
 
     def generate_mjpeg(self) -> Generator[bytes, None, None]:
         while not self._stop_event.is_set():
@@ -158,7 +190,9 @@ class VideoAnalyticsPipeline:
         corrupted_reads = 0
         frame_id = 0
         prev_display_ts = time.time()
+        target_interval = 1.0 / max(1, settings.target_fps)
         while not self._stop_event.is_set():
+            loop_start = time.monotonic()
             if cap is None or not cap.isOpened():
                 cap = self._open_capture()
                 if not cap.isOpened():
@@ -200,7 +234,6 @@ class VideoAnalyticsPipeline:
             self._actual_width = w
             self._actual_height = h
             
-            # Lightweight render in capture loop for smooth display
             ts_ms = int(time.time() * 1000)
             with self._overlay_lock:
                 cur_tracks = list(self._overlay_tracks)
@@ -210,14 +243,12 @@ class VideoAnalyticsPipeline:
             if ok_enc:
                 self._latest_frame = bytes(buf)
             
-            # Track actual display FPS
             now = time.time()
             dt = now - prev_display_ts
             prev_display_ts = now
             if dt > 0:
                 self.stats.fps = 0.8 * self.stats.fps + 0.2 * (1.0 / dt)
             
-            # Send frame to inference queue (non-blocking, drop old if full)
             packet = FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=frame)
             try:
                 self.frame_queue.put_nowait(packet)
@@ -231,6 +262,11 @@ class VideoAnalyticsPipeline:
                 except queue.Full:
                     pass
             frame_id += 1
+
+            elapsed = time.monotonic() - loop_start
+            sleep_time = target_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
         if cap is not None:
             cap.release()
 

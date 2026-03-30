@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -152,10 +154,13 @@ def create_fastapi_app() -> FastAPI:
 
     @app.on_event("startup")
     def startup() -> None:
-        services.pipeline.start()
+        services.pipeline._publish_placeholder_frame("等待客户端连接...")
 
     @app.on_event("shutdown")
     def shutdown() -> None:
+        with services.pipeline._client_lock:
+            if services.pipeline._idle_timer is not None:
+                services.pipeline._idle_timer.cancel()
         services.pipeline.stop()
 
     @app.get("/", response_class=HTMLResponse)
@@ -167,9 +172,25 @@ def create_fastapi_app() -> FastAPI:
         return templates.TemplateResponse("history.html", {"request": request})
 
     @app.get("/stream")
-    def stream() -> StreamingResponse:
+    async def stream(request: Request) -> StreamingResponse:
+        async def mjpeg_stream():
+            services.pipeline.acquire()
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    frame = services.pipeline.latest_frame
+                    if frame:
+                        yield (
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                        )
+                    await asyncio.sleep(0.03)
+            finally:
+                services.pipeline.release()
+
         return StreamingResponse(
-            services.pipeline.generate_mjpeg(),
+            mjpeg_stream(),
             media_type="multipart/x-mixed-replace; boundary=frame",
         )
 

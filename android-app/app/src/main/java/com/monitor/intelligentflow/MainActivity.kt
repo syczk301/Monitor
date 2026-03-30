@@ -238,51 +238,48 @@ private fun MonitorApp(vm: MainViewModel) {
 
     val api = vm.api ?: return
 
-    if (isFullscreen) {
-        MonitorScreen(
-            api = api,
-            onFullscreenChange = { isFullscreen = it }
-        )
-        return
-    }
-
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                        )
-                        Text(
-                            text = " SYNC_NET",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            letterSpacing = 1.sp
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
+            if (!isFullscreen) {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                            Text(
+                                text = " SYNC_NET",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground
+                    )
                 )
-            )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
+            val contentModifier = if (isFullscreen) Modifier
+            else Modifier.padding(innerPadding).padding(bottom = 80.dp)
+
             when (selectedTab) {
                 AppTab.Monitor -> MonitorScreen(
                     api = api,
-                    modifier = Modifier.padding(innerPadding).padding(bottom = 80.dp),
+                    modifier = contentModifier,
                     onFullscreenChange = { isFullscreen = it }
                 )
                 AppTab.History -> HistoryScreen(
@@ -297,7 +294,6 @@ private fun MonitorApp(vm: MainViewModel) {
                 )
             }
 
-            // Floating Bottom Navigation
             AnimatedVisibility(
                 visible = !isFullscreen,
                 enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)),
