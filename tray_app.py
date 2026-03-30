@@ -53,10 +53,15 @@ class ServerManager:
     def _run(self) -> None:
         try:
             os.chdir(str(_BASE_DIR))
+            if sys.stdout is None:
+                sys.stdout = open(os.devnull, "w")
+            if sys.stderr is None:
+                sys.stderr = open(os.devnull, "w")
             import uvicorn
             config = uvicorn.Config(
                 "app.api.main:app", host=HOST, port=PORT,
                 log_level="info", access_log=False,
+                log_config=None,
             )
             self._server = uvicorn.Server(config)
             self.running = True
