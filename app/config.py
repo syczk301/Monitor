@@ -52,7 +52,7 @@ class Settings(BaseModel):
     mongodb_uri: str = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017")
     mongodb_database: str = os.getenv("MONGODB_DATABASE", "camera_monitor")
     mongodb_identity_collection: str = os.getenv("MONGODB_IDENTITY_COLLECTION", "identity_templates")
-    detector_model: str = "yolov8s.pt"
+    detector_model: str = os.getenv("DETECTOR_MODEL", "yolo26s.pt")
     detector_confidence: float = 0.50
     detector_iou: float = 0.45
     auto_roi_enabled: bool = _env_flag("AUTO_ROI_ENABLED", default=True)

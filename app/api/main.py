@@ -211,3 +211,6 @@ def create_fastapi_app() -> FastAPI:
         )
 
     return app
+
+
+app = create_fastapi_app()

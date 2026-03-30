@@ -10,12 +10,13 @@ import torch
 import torch.nn as nn
 
 try:
-    from torchvision import models, transforms
+    from torchvision import transforms
     from PIL import Image
 except ImportError:
-    models = None
+    transforms = None
 
 from app.config import settings
+from app.core.osnet import load_osnet
 
 
 def _cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
@@ -46,20 +47,17 @@ class PersonEmbeddingEngine:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self._model = None
         self.transform = None
-        
-        if models is not None:
-            # 下载/加载在ImageNet预训练好的 ResNet18 模型，并移除全连接层作为特征提取器
-            try:
-                base_model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
-                self._model = nn.Sequential(*list(base_model.children())[:-1])
-                self._model.eval().to(self.device)
+
+        try:
+            self._model = load_osnet(self.device)
+            if self._model is not None and transforms is not None:
                 self.transform = transforms.Compose([
                     transforms.Resize((256, 128)),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                 ])
-            except Exception as e:
-                print("Failed to load resnet18:", e)
+        except Exception as e:
+            print("Failed to load OSNet:", e)
 
     def embed_128d(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray | None:
         x1, y1, x2, y2 = bbox
@@ -84,10 +82,10 @@ class PersonEmbeddingEngine:
             feat = self._model(input_tensor).cpu().numpy().flatten()
 
         dim = settings.feature_dim
-        split = max(32, dim // 2)
+        split = max(32, int(dim * 0.7))
         deep = self._resize_feature(feat, split)
         hand = self._resize_feature(handcrafted, dim - split)
-        merged = np.concatenate((deep * 0.75, hand * 0.25))
+        merged = np.concatenate((deep * 0.9, hand * 0.1))
         return _normalize_feature(merged)
 
     @staticmethod
