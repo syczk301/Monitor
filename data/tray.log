@@ -1,0 +1,57 @@
+2026-03-31 00:45:54,589 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-03-31 00:45:54,741 INFO Server starting on 0.0.0.0:8000
+2026-03-31 00:50:52,143 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-03-31 00:50:52,288 ERROR Server failed to start
+Traceback (most recent call last):
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 544, in configure
+    formatters[name] = self.configure_formatter(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 656, in configure_formatter
+    result = self.configure_custom(config)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 475, in configure_custom
+    result = c(**kwargs)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\uvicorn\logging.py", line 42, in __init__
+    self.use_colors = sys.stdout.isatty()
+AttributeError: 'NoneType' object has no attribute 'isatty'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\mywork\monitor\tray_app.py", line 57, in _run
+    config = uvicorn.Config(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\uvicorn\config.py", line 278, in __init__
+    self.configure_logging()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\uvicorn\config.py", line 370, in configure_logging
+    logging.config.dictConfig(self.log_config)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 811, in dictConfig
+    dictConfigClass(config).configure()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 547, in configure
+    raise ValueError('Unable to configure '
+ValueError: Unable to configure formatter 'default'
+2026-03-31 00:50:52,295 INFO Server stopped
+2026-03-31 00:50:56,086 ERROR Server failed to start
+Traceback (most recent call last):
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 544, in configure
+    formatters[name] = self.configure_formatter(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 656, in configure_formatter
+    result = self.configure_custom(config)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 475, in configure_custom
+    result = c(**kwargs)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\uvicorn\logging.py", line 42, in __init__
+    self.use_colors = sys.stdout.isatty()
+AttributeError: 'NoneType' object has no attribute 'isatty'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "D:\mywork\monitor\tray_app.py", line 57, in _run
+    config = uvicorn.Config(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\uvicorn\config.py", line 278, in __init__
+    self.configure_logging()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\uvicorn\config.py", line 370, in configure_logging
+    logging.config.dictConfig(self.log_config)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 811, in dictConfig
+    dictConfigClass(config).configure()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\logging\config.py", line 547, in configure
+    raise ValueError('Unable to configure '
+ValueError: Unable to configure formatter 'default'
+2026-03-31 00:50:56,087 INFO Server stopped

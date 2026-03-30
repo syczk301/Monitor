@@ -138,6 +138,17 @@ def capture_info() -> dict:
     return services.pipeline.get_capture_info()
 
 
+class CameraSettingsPayload(BaseModel):
+    width: int = Field(ge=640, le=3840)
+    height: int = Field(ge=480, le=2160)
+    fps: int = Field(ge=5, le=60)
+
+
+@router.post("/camera_settings")
+def update_camera_settings(payload: CameraSettingsPayload) -> dict:
+    return services.pipeline.apply_camera_settings(payload.width, payload.height, payload.fps)
+
+
 @router.get("/reports/daily")
 def report_daily() -> dict:
     return services.reports.generate_daily()

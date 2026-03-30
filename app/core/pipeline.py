@@ -173,6 +173,18 @@ class VideoAnalyticsPipeline:
                 )
             time.sleep(0.03)
 
+    def apply_camera_settings(self, width: int, height: int, fps: int) -> dict:
+        """Dynamically change resolution and target FPS, restarts capture."""
+        settings.camera_width = width
+        settings.camera_height = height
+        settings.target_fps = fps
+        was_running = not self._stop_event.is_set()
+        if was_running:
+            self.stop()
+            self._publish_placeholder_frame("正在切换分辨率...")
+            self.start()
+        return self.get_capture_info()
+
     def get_capture_info(self) -> dict:
         return {
             "requested_width": settings.camera_width,
@@ -180,6 +192,7 @@ class VideoAnalyticsPipeline:
             "actual_width": self._actual_width,
             "actual_height": self._actual_height,
             "mjpeg_quality": settings.mjpeg_quality,
+            "target_fps": settings.target_fps,
             "capture_status": self.stats.capture_status,
             "capture_backend": self.stats.capture_backend,
         }

@@ -97,7 +97,7 @@ class Settings(BaseModel):
     camera_width: int = int(os.getenv("CAMERA_WIDTH", "1920"))
     camera_height: int = int(os.getenv("CAMERA_HEIGHT", "1080"))
     mjpeg_quality: int = int(os.getenv("MJPEG_QUALITY", "85"))
-    target_fps: int = int(os.getenv("TARGET_FPS", "15"))
+    target_fps: int = int(os.getenv("TARGET_FPS", "30"))
     frame_queue_size: int = 1
     result_queue_size: int = 32
     feature_dim: int = Field(default=128, ge=64, le=512)

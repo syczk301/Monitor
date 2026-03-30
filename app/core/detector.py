@@ -29,6 +29,9 @@ class PersonDetector:
             from ultralytics import YOLO
 
             self._model = YOLO(settings.detector_model)
+            import torch
+            if torch.cuda.is_available():
+                self._model.to("cuda")
         except Exception:
             self._model = None
         self._hog = cv2.HOGDescriptor()

@@ -514,6 +514,31 @@
           <p id="capture-backend">--</p>
         </div>
       </div>
+      <div class="cam-settings" style="margin-top:20px;">
+        <div class="kpi-section-title" style="margin-bottom:12px;">摄像头设置</div>
+        <h2 style="font-size:1rem;">摄像头设置</h2>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <label style="font-size:0.8rem; color:var(--text-muted);">分辨率
+            <select id="cam-res" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,23,42,0.8);color:var(--text);font-size:0.85rem;">
+              <option value="640x480">480p (640x480)</option>
+              <option value="1280x720">720p (1280x720)</option>
+              <option value="1920x1080" selected>1080p (1920x1080)</option>
+              <option value="2560x1440">1440p (2560x1440)</option>
+              <option value="3840x2160">4K (3840x2160)</option>
+            </select>
+          </label>
+          <label style="font-size:0.8rem; color:var(--text-muted);">目标帧率
+            <select id="cam-fps" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,23,42,0.8);color:var(--text);font-size:0.85rem;">
+              <option value="5">5 FPS</option>
+              <option value="15">15 FPS</option>
+              <option value="30" selected>30 FPS</option>
+              <option value="60">60 FPS</option>
+            </select>
+          </label>
+        </div>
+        <button id="cam-apply" type="button" style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:none;background:var(--primary);color:white;font-weight:600;font-size:0.85rem;cursor:pointer;transition:all 0.2s;">应用</button>
+        <p id="cam-msg" style="font-size:0.78rem;color:var(--accent);margin:6px 0 0;min-height:1.2em;"></p>
+      </div>
     </div>
   </div>
   <script>
@@ -759,6 +784,50 @@
     setInterval(pullStats, 1000);
     pullStats();
     updateInteractionCursor();
+
+    const camRes = document.getElementById("cam-res");
+    const camFps = document.getElementById("cam-fps");
+    const camApply = document.getElementById("cam-apply");
+    const camMsg = document.getElementById("cam-msg");
+
+    async function loadCamSettings() {
+      try {
+        const res = await fetch("/api/capture_info");
+        const d = await res.json();
+        const key = `${d.requested_width}x${d.requested_height}`;
+        for (const opt of camRes.options) {
+          if (opt.value === key) { opt.selected = true; break; }
+        }
+        for (const opt of camFps.options) {
+          if (parseInt(opt.value) === (d.target_fps || 30)) { opt.selected = true; break; }
+        }
+      } catch (e) {}
+    }
+
+    camApply.addEventListener("click", async () => {
+      const [w, h] = camRes.value.split("x").map(Number);
+      const fps = parseInt(camFps.value);
+      camApply.disabled = true;
+      camApply.textContent = "切换中...";
+      camMsg.textContent = "";
+      try {
+        const res = await fetch("/api/camera_settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ width: w, height: h, fps })
+        });
+        const d = await res.json();
+        camMsg.textContent = `已切换: ${d.actual_width}x${d.actual_height}`;
+        camMsg.style.color = "var(--accent)";
+      } catch (e) {
+        camMsg.textContent = "切换失败";
+        camMsg.style.color = "#ef4444";
+      }
+      camApply.disabled = false;
+      camApply.textContent = "应用";
+    });
+
+    loadCamSettings();
   </script>
 </body>
 
