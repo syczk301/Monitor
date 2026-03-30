@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>智能客流分析系统</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #10b981;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      font-family: 'Inter', -apple-system, 'Helvetica Neue', sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      background-image: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #0f172a 60%);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ===== Desktop styles ===== */
+    .header {
+      padding: 24px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(15, 23, 42, 0.5);
+      backdrop-filter: blur(10px);
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .nav-btn {
+      background: var(--primary);
+      color: white;
+      text-decoration: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 500;
+      transition: all 0.2s;
+      box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.39);
+    }
+
+    .nav-btn:hover {
+      background: var(--primary-hover);
+      transform: translateY(-1px);
+    }
+
+    .wrap {
+      max-width: 1400px;
+      margin: 32px auto;
+      padding: 0 32px;
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 24px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      transition: transform 0.3s ease;
+    }
+
+    .card:hover { transform: translateY(-2px); border-color: rgba(255, 255, 255, 0.1); }
+
+    .card h2 {
+      margin-top: 0;
+      margin-bottom: 20px;
+      font-size: 1.25rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card h2::before {
+      content: '';
+      display: block;
+      width: 4px;
+      height: 20px;
+      background: var(--primary);
+      border-radius: 2px;
+    }
+
+    img {
+      width: 100%;
+      border-radius: 12px;
+      display: block;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .kpi {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .kpi div {
+      background: rgba(15, 23, 42, 0.5);
+      padding: 20px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      transition: all 0.2s;
+    }
+
+    .kpi div:hover { background: rgba(30, 41, 59, 0.8); border-color: rgba(255, 255, 255, 0.1); }
+
+    .kpi div strong {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .kpi div p {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-right: 6px;
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .value-highlight { color: var(--primary) !important; }
+
+    .tool-btn {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .tool-btn:hover { background: rgba(255, 255, 255, 0.12); }
+
+    .tool-btn.active {
+      background: rgba(59, 130, 246, 0.2);
+      color: #bfdbfe;
+      border-color: rgba(59, 130, 246, 0.55);
+    }
+
+    .monitor-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .monitor-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .monitor-toolbar-hint {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .roi-configs {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .roi-panel-empty {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.48);
+      border: 1px dashed rgba(148, 163, 184, 0.3);
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .roi-panel {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid rgba(16, 185, 129, 0.22);
+    }
+
+    .roi-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .roi-panel-title { font-size: 0.82rem; font-weight: 700; color: #d1fae5; }
+    .roi-panel-badge { font-size: 0.72rem; color: var(--text-muted); }
+    .roi-panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .roi-panel label { display: grid; gap: 4px; font-size: 0.7rem; color: #d1fae5; }
+
+    .roi-panel input {
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 32px;
+      padding: 5px 7px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(15, 23, 42, 0.92);
+      color: var(--text);
+      font-size: 0.72rem;
+    }
+
+    .roi-panel button {
+      border: none;
+      border-radius: 6px;
+      background: #10b981;
+      color: white;
+      min-height: 32px;
+      padding: 6px 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .roi-tag {
+      position: absolute;
+      left: 0;
+      top: -24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.88);
+      color: #d1fae5;
+      font-size: 0.72rem;
+      font-weight: 600;
+      border: 1px solid rgba(16, 185, 129, 0.45);
+      white-space: nowrap;
+    }
+
+    /* ===== App shell mode (IntelligentFlowShell) ===== */
+    body.app-shell {
+      background: #0a0e1a;
+      background-image: none;
+    }
+
+    body.app-shell .header { display: none; }
+
+    body.app-shell .wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin: 0;
+      padding: 0;
+      max-width: 100%;
+    }
+
+    body.app-shell .card {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+
+    body.app-shell .card:hover { transform: none; }
+
+    /* -- video section -- */
+    body.app-shell .stream-section {
+      position: relative;
+    }
+
+    body.app-shell .stream-section img {
+      border-radius: 0;
+      box-shadow: none;
+      border: none;
+    }
+
+    body.app-shell .monitor-head { display: none; }
+
+    body.app-shell #stream-container {
+      border-radius: 0 !important;
+      border: none !important;
+    }
+
+    /* -- floating toolbar -- */
+    body.app-shell .app-float-bar {
+      display: flex;
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 20;
+      gap: 8px;
+    }
+
+    body.app-shell .app-float-btn {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text);
+      padding: 10px 16px;
+      border-radius: 100px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    body.app-shell .app-float-btn:active {
+      transform: scale(0.95);
+      background: rgba(30, 41, 59, 0.9);
+    }
+
+    body.app-shell .app-float-btn.active {
+      background: rgba(59, 130, 246, 0.35);
+      border-color: rgba(59, 130, 246, 0.6);
+      color: #bfdbfe;
+    }
+
+    /* -- KPI dashboard -- */
+    body.app-shell .kpi-section {
+      padding: 16px;
+    }
+
+    body.app-shell .kpi-section-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-muted);
+      margin: 0 0 12px 4px;
+    }
+
+    body.app-shell .kpi {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    body.app-shell .kpi div {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 14px;
+      padding: 14px 12px;
+      text-align: center;
+      transition: none;
+    }
+
+    body.app-shell .kpi div:hover { transform: none; background: rgba(30, 41, 59, 0.5); }
+
+    body.app-shell .kpi div strong {
+      font-size: 0.62rem;
+      letter-spacing: 0.8px;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+
+    body.app-shell .kpi div p {
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    body.app-shell .kpi div p#capture-status,
+    body.app-shell .kpi div p#capture-backend {
+      font-size: 0.85rem;
+    }
+
+    /* -- ROI section -- */
+    body.app-shell .roi-section {
+      padding: 0 16px 16px;
+    }
+
+    body.app-shell .roi-section h2 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-muted);
+      margin: 4px 0 12px 4px;
+      display: block;
+    }
+
+    body.app-shell .roi-section h2::before { display: none; }
+
+    body.app-shell .roi-configs {
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 0;
+    }
+
+    body.app-shell .roi-panel {
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(30, 41, 59, 0.5);
+      border-color: rgba(16, 185, 129, 0.15);
+    }
+
+    body.app-shell .roi-panel input {
+      min-height: 38px;
+      border-radius: 10px;
+      font-size: 0.82rem;
+      padding: 8px 10px;
+    }
+
+    body.app-shell .roi-panel button {
+      min-height: 40px;
+      border-radius: 10px;
+      font-size: 0.82rem;
+    }
+
+    body.app-shell .roi-panel-empty {
+      border-radius: 14px;
+      text-align: center;
+      padding: 20px 16px;
+      font-size: 0.85rem;
+      margin-top: 0;
+    }
+
+    body.app-shell #stream-error {
+      padding: 0 16px;
+      font-size: 0.82rem;
+    }
+
+    .app-float-bar { display: none; }
+  </style>
+</head>
+
+<body>
+  <div class="header">
+    <h1><span class="status-dot"></span>智能客流分析系统</h1>
+    <a href="/history" class="nav-btn">排查历史记录</a>
+  </div>
+  <div class="wrap">
+    <div class="card stream-section">
+      <div class="monitor-head">
+        <h2 style="margin:0;">实时监控画面</h2>
+        <div class="monitor-toolbar">
+          <span class="monitor-toolbar-hint">滚轮缩放，拖动平移；"区域圈选"用于高级微调</span>
+          <button id="roi-toggle" type="button" class="tool-btn">高级圈选</button>
+        </div>
+      </div>
+      <div style="position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);"
+        id="stream-container">
+        <div id="stream-wrapper" style="position: relative; transform-origin: 0 0; transition: transform 0.05s linear; width: 100%; height: 100%;">
+          <img id="stream" src="/stream" alt="stream" style="border:none; border-radius:0; padding:0; margin:0;" />
+          <div id="roi-layer" style="position: absolute; top:0; left:0; right:0; bottom:0; cursor: grab;"></div>
+        </div>
+        <div class="app-float-bar">
+          <button id="app-roi-toggle" type="button" class="app-float-btn" onclick="document.getElementById('roi-toggle').click()">区域圈选</button>
+          <button class="app-float-btn" onclick="location.reload()">刷新画面</button>
+        </div>
+      </div>
+      <p id="stream-error" style="color: #ef4444; margin-top: 12px; font-size: 0.9em;"></p>
+      <div class="roi-section">
+        <h2 style="margin:18px 0 12px;">ROI 检测参数</h2>
+        <div id="roi-configs" class="roi-configs"></div>
+      </div>
+    </div>
+    <div class="card kpi-section">
+      <div class="kpi-section-title">运行指标</div>
+      <h2>运行指标</h2>
+      <div class="kpi">
+        <div><strong>FPS</strong>
+          <p id="fps">--</p>
+        </div>
+        <div><strong>延迟</strong>
+          <p id="latency">--</p>
+        </div>
+        <div><strong>在场人数</strong>
+          <p id="targets" class="value-highlight">--</p>
+        </div>
+        <div><strong>GPU</strong>
+          <p id="gpu">--</p>
+        </div>
+        <div><strong>采集</strong>
+          <p id="capture-status">--</p>
+        </div>
+        <div><strong>后端</strong>
+          <p id="capture-backend">--</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const isAppShell = navigator.userAgent.includes("IntelligentFlowShell");
+    if (isAppShell) {
+      document.body.classList.add("app-shell");
+    }
+
+    const roiToggle = document.getElementById("roi-toggle");
+    const appRoiToggle = document.getElementById("app-roi-toggle");
+
+    const streamImage = document.getElementById("stream");
+    const streamError = document.getElementById("stream-error");
+    streamImage.addEventListener("error", () => {
+      streamError.innerText = "信号流丢失或加载失败，请确保后台识别服务运行正常且摄像头可用。";
+    });
+
+    let click1 = null;
+    const streamLayer = document.getElementById("roi-layer");
+    const streamContainer = document.getElementById("stream-container");
+    const streamWrapper = document.getElementById("stream-wrapper");
+    const roiConfigs = document.getElementById("roi-configs");
+    let roiDrawEnabled = false;
+
+    let scale = 1;
+    let panX = 0;
+    let panY = 0;
+    let isPanning = false;
+    let startPanX = 0;
+    let startPanY = 0;
+
+    function clampPan() {
+      if (scale <= 1) { panX = 0; panY = 0; return; }
+      const rect = streamContainer.getBoundingClientRect();
+      panX = Math.max(rect.width * (1 - scale), Math.min(0, panX));
+      panY = Math.max(rect.height * (1 - scale), Math.min(0, panY));
+    }
+
+    function updateInteractionCursor() {
+      if (roiDrawEnabled) { streamLayer.style.cursor = "crosshair"; return; }
+      if (scale <= 1) { streamLayer.style.cursor = "default"; return; }
+      streamLayer.style.cursor = isPanning ? "grabbing" : "grab";
+    }
+
+    function updateTransform() {
+      clampPan();
+      streamWrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    }
+
+    function clearTempRoi() {
+      click1 = null;
+      const temp = document.getElementById("temp-roi");
+      if (temp) temp.remove();
+    }
+
+    function setRoiDrawEnabled(enabled) {
+      roiDrawEnabled = enabled;
+      roiToggle.classList.toggle("active", enabled);
+      roiToggle.innerText = enabled ? "退出圈选" : "高级圈选";
+      if (appRoiToggle) {
+        appRoiToggle.classList.toggle("active", enabled);
+        appRoiToggle.innerText = enabled ? "退出圈选" : "区域圈选";
+      }
+      if (!enabled) clearTempRoi();
+      updateInteractionCursor();
+    }
+
+    roiToggle.addEventListener("click", () => setRoiDrawEnabled(!roiDrawEnabled));
+
+    streamContainer.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const wheel = e.deltaY < 0 ? 1 : -1;
+      let zoom = Math.exp(wheel * 0.1);
+      const rect = streamContainer.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      let newScale = Math.max(1, Math.min(scale * zoom, 10));
+      zoom = newScale / scale;
+      panX = mouseX - (mouseX - panX) * zoom;
+      panY = mouseY - (mouseY - panY) * zoom;
+      scale = newScale;
+      updateTransform();
+    }, { passive: false });
+
+    streamContainer.addEventListener("mousedown", (e) => {
+      const canPan = scale > 1;
+      const isLeftDrag = canPan && e.button === 0 && !roiDrawEnabled && e.target.tagName.toLowerCase() !== "button";
+      const isRightDrag = canPan && e.button === 2;
+      if (isLeftDrag || isRightDrag) {
+        isPanning = true;
+        startPanX = e.clientX - panX;
+        startPanY = e.clientY - panY;
+        updateInteractionCursor();
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (isPanning) { panX = e.clientX - startPanX; panY = e.clientY - startPanY; updateTransform(); }
+    });
+    window.addEventListener("mouseup", () => { if (isPanning) { isPanning = false; updateInteractionCursor(); } });
+    streamContainer.addEventListener("mouseleave", () => { if (isPanning) { isPanning = false; updateInteractionCursor(); } });
+    streamContainer.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    streamLayer.addEventListener("mousedown", (e) => {
+      if (e.target.tagName.toLowerCase() === 'button' || e.button !== 0) return;
+      if (!roiDrawEnabled) return;
+      const rect = streamLayer.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top) / scale;
+      const nw = streamImage.naturalWidth || 1280;
+      const nh = streamImage.naturalHeight || 720;
+      const dw = rect.width / scale || nw;
+      const dh = rect.height / scale || nh;
+      const realX = Math.round((x / dw) * nw);
+      const realY = Math.round((y / dh) * nh);
+
+      if (!click1) {
+        click1 = { realX, realY, domX: x, domY: y };
+        const temp = document.createElement("div");
+        temp.id = "temp-roi";
+        Object.assign(temp.style, { position: "absolute", border: "2px dashed #3b82f6", left: x+"px", top: y+"px", width: "0px", height: "0px", pointerEvents: "none" });
+        streamLayer.appendChild(temp);
+      } else {
+        const firstClick = click1;
+        clearTempRoi();
+        const x1 = Math.min(firstClick.realX, realX), y1 = Math.min(firstClick.realY, realY);
+        const x2 = Math.max(firstClick.realX, realX), y2 = Math.max(firstClick.realY, realY);
+        if (x2 - x1 < 20 || y2 - y1 < 20) return;
+        if (confirm("是否将此框选区域设为【固定人员检测区】？")) {
+          fetch("/api/rois", { method: "POST", body: JSON.stringify({ bbox: [x1, y1, x2, y2] }), headers: { "Content-Type": "application/json" } }).then(loadRois);
+        }
+      }
+    });
+
+    streamLayer.addEventListener("mousemove", (e) => {
+      if (!roiDrawEnabled || !click1) return;
+      const rect = streamLayer.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top) / scale;
+      const temp = document.getElementById("temp-roi");
+      if (temp) {
+        temp.style.left = Math.min(click1.domX, x) + "px";
+        temp.style.top = Math.min(click1.domY, y) + "px";
+        temp.style.width = Math.abs(x - click1.domX) + "px";
+        temp.style.height = Math.abs(y - click1.domY) + "px";
+      }
+    });
+
+    async function loadRois() {
+      try {
+        const res = await fetch("/api/rois");
+        const rois = await res.json();
+        const nw = streamImage.naturalWidth || 1280;
+        const nh = streamImage.naturalHeight || 720;
+
+        Array.from(streamLayer.children).forEach(c => { if (c.id !== "temp-roi") c.remove(); });
+        roiConfigs.innerHTML = "";
+
+        if (!rois.length) {
+          roiConfigs.innerHTML = `<div class="roi-panel-empty">还没有重点检测区域。点击"区域圈选"后，在画面上框选一个 ROI。</div>`;
+        }
+
+        rois.forEach((roi, index) => {
+          const [x1, y1, x2, y2] = roi.bbox;
+          const params = roi.params || {};
+          const box = document.createElement("div");
+          box.className = "roi-box";
+          Object.assign(box.style, {
+            position: "absolute", border: "2px dashed #10b981", backgroundColor: "rgba(16, 185, 129, 0.1)",
+            left: `${(x1/nw)*100}%`, top: `${(y1/nh)*100}%`, width: `${((x2-x1)/nw)*100}%`, height: `${((y2-y1)/nh)*100}%`
+          });
+
+          const tag = document.createElement("div");
+          tag.className = "roi-tag";
+          tag.innerText = `ROI ${index + 1}`;
+          box.appendChild(tag);
+
+          const delBtn = document.createElement("button");
+          delBtn.innerText = "\u00d7";
+          Object.assign(delBtn.style, { position: "absolute", top: "0", right: "0", background: "#ef4444", color: "white", border: "none", borderRadius: "0 0 0 4px", cursor: "pointer", padding: "2px 6px", fontSize: "0.75rem" });
+          delBtn.onclick = (e) => { e.stopPropagation(); fetch(`/api/rois/${roi.id}`, { method: "DELETE" }).then(loadRois); };
+          box.appendChild(delBtn);
+          streamLayer.appendChild(box);
+
+          const panel = document.createElement("div");
+          panel.className = "roi-panel";
+          panel.innerHTML = `
+            <div class="roi-panel-head">
+              <div class="roi-panel-title">ROI ${index+1}</div>
+              <div class="roi-panel-badge">${x2-x1} x ${y2-y1}</div>
+            </div>
+            <div class="roi-panel-grid">
+              <label>阈值<input id="roi-conf-${roi.id}" type="number" min="0.01" max="0.99" step="0.01" value="${Number(params.confidence ?? 0.18).toFixed(2)}" /></label>
+              <label>分辨率<input id="roi-imgsz-${roi.id}" type="number" min="320" max="1920" step="32" value="${params.imgsz ?? 960}" /></label>
+              <label>放大倍率<input id="roi-up-${roi.id}" type="number" min="1" max="6" step="0.1" value="${Number(params.upscale_factor ?? 3.0).toFixed(1)}" /></label>
+              <label>增强放大<input id="roi-up2-${roi.id}" type="number" min="1" max="8" step="0.1" value="${Number(params.enhanced_upscale_factor ?? 3.5).toFixed(1)}" /></label>
+            </div>
+            <button type="button">保存 ROI ${index+1} 参数</button>
+          `;
+          panel.querySelector("button").onclick = () => saveRoiParams(roi);
+          roiConfigs.appendChild(panel);
+        });
+      } catch (e) { }
+    }
+
+    streamImage.onload = loadRois;
+    setInterval(loadRois, 5000);
+
+    async function saveRoiParams(roi) {
+      const gv = (id) => document.getElementById(id).value;
+      await fetch(`/api/rois/${roi.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bbox: roi.bbox,
+          params: {
+            confidence: parseFloat(gv(`roi-conf-${roi.id}`)),
+            imgsz: parseInt(gv(`roi-imgsz-${roi.id}`), 10),
+            upscale_factor: parseFloat(gv(`roi-up-${roi.id}`)),
+            enhanced_upscale_factor: parseFloat(gv(`roi-up2-${roi.id}`)),
+          }
+        })
+      });
+      await loadRois();
+    }
+
+    async function pullStats() {
+      try {
+        const res = await fetch("/stats");
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById("fps").innerText = d.fps.toFixed(1);
+        document.getElementById("latency").innerText = d.avg_latency_ms.toFixed(0) + "ms";
+        document.getElementById("targets").innerText = d.tracked_targets;
+        document.getElementById("gpu").innerText = d.gpu_utilization.toFixed(0) + "%";
+        const cs = document.getElementById("capture-status");
+        cs.innerText = d.capture_status || "-";
+        cs.style.color = d.capture_status === "running" ? "var(--accent)" : "#ef4444";
+        document.getElementById("capture-backend").innerText = d.capture_backend || "-";
+      } catch (e) { }
+    }
+    setInterval(pullStats, 1000);
+    pullStats();
+    updateInteractionCursor();
+  </script>
+</body>
+
+</html>

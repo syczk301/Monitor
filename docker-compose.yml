@@ -1,0 +1,30 @@
+version: "3.9"
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: camera-monitor:latest
+    ports:
+      - "0.0.0.0:8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - USE_MONGODB_STORAGE=true
+      - USE_MONGODB_IDENTITY_TEMPLATES=true
+      - MONGODB_URI=mongodb://mongo:27017
+      - MONGODB_DATABASE=camera_monitor
+      - MONGODB_IDENTITY_COLLECTION=identity_templates
+    depends_on:
+      - mongo
+    restart: always
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+    restart: always
+
+volumes:
+  mongo_data:

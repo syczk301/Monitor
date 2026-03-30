@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>历史记录 - 智能客流分析系统</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --border: rgba(255, 255, 255, 0.08);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      font-family: 'Inter', -apple-system, 'Helvetica Neue', sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      background-image: radial-gradient(circle at 100% 0%, #1e1b4b 0%, #0f172a 60%);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ===== Desktop styles ===== */
+    .header {
+      padding: 24px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.5);
+      backdrop-filter: blur(10px);
+    }
+
+    .header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+
+    .nav-btn {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .nav-btn:hover { color: var(--text); }
+
+    .wrap { max-width: 1400px; margin: 32px auto; padding: 0 32px; }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+    }
+
+    .action-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+
+    button:hover { background: rgba(255, 255, 255, 0.1); }
+
+    button.primary {
+      background: var(--primary);
+      color: white;
+      border: none;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    button.primary:hover { background: var(--primary-hover); }
+
+    button.danger {
+      background: var(--danger);
+      color: white;
+      border: none;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin-top: 10px;
+    }
+
+    th, td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.6);
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    th:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+    th:last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+
+    input[type=checkbox] { accent-color: var(--primary); cursor: pointer; width: 16px; height: 16px; }
+
+    input[type=text] {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-family: inherit;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    input[type=text]:focus { outline: none; border-color: var(--primary); }
+
+    .group-header { cursor: pointer; background: rgba(255, 255, 255, 0.02); transition: background 0.2s; }
+    .group-header:hover { background: rgba(255, 255, 255, 0.05); }
+    .group-header td { font-weight: 500; font-size: 0.95rem; }
+    .group-child { background: rgba(0, 0, 0, 0.15); }
+    .group-child.hidden { display: none; }
+    .group-child td { font-size: 0.9rem; color: #cbd5e1; }
+    .toggle-arrow { display: inline-block; width: 20px; transition: transform 0.2s; opacity: 0.7; }
+    .toggle-arrow.open { transform: rotate(90deg); opacity: 1; }
+
+    .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; white-space: nowrap; display: inline-block; }
+    .status-active { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .status-left { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+
+    pre {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow-x: auto;
+      color: #a5b4fc;
+    }
+
+    .report-title {
+      margin-top: 32px;
+      font-size: 1.2rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .report-title::before {
+      content: '';
+      display: block;
+      width: 4px;
+      height: 16px;
+      background: var(--primary);
+      border-radius: 2px;
+    }
+
+    /* ===== App shell mode ===== */
+    body.app-shell {
+      background: #0a0e1a;
+      background-image: none;
+    }
+
+    body.app-shell .header { display: none; }
+    body.app-shell .desktop-table { display: none; }
+
+    body.app-shell .wrap {
+      margin: 0;
+      padding: 0;
+      max-width: 100%;
+    }
+
+    body.app-shell .card {
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+
+    body.app-shell .main-card {
+      padding: 0;
+      margin: 0;
+    }
+
+    /* -- app action bar -- */
+    body.app-shell .app-actions {
+      display: flex;
+      padding: 12px 16px;
+      gap: 8px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    body.app-shell .app-actions::-webkit-scrollbar { display: none; }
+
+    body.app-shell .app-action-btn {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      padding: 10px 18px;
+      border-radius: 100px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+
+    body.app-shell .app-action-btn:active {
+      transform: scale(0.95);
+    }
+
+    body.app-shell .app-action-btn.primary {
+      background: var(--primary);
+      border-color: transparent;
+    }
+
+    body.app-shell .app-action-btn.danger {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      border-color: rgba(239, 68, 68, 0.2);
+    }
+
+    /* -- app list -- */
+    body.app-shell .app-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 0 16px 120px;
+    }
+
+    body.app-shell .app-visit-card {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 16px;
+      padding: 16px;
+      transition: all 0.15s;
+    }
+
+    body.app-shell .app-visit-card:active {
+      background: rgba(30, 41, 59, 0.7);
+    }
+
+    body.app-shell .avc-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    body.app-shell .avc-pid {
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: var(--primary);
+    }
+
+    body.app-shell .avc-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    body.app-shell .avc-metric {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+    }
+
+    body.app-shell .avc-metric-label {
+      font-size: 0.6rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    body.app-shell .avc-metric-value {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    body.app-shell .avc-time {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      padding: 0 2px;
+    }
+
+    body.app-shell .avc-bottom {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    body.app-shell .avc-bottom input[type=checkbox] {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+
+    body.app-shell .avc-bottom input[type=text] {
+      flex: 1;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+
+    body.app-shell .avc-bottom input[type=text]:focus {
+      border-color: var(--primary);
+      outline: none;
+    }
+
+    body.app-shell .avc-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: none;
+      color: var(--text-muted);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s;
+    }
+
+    body.app-shell .avc-btn:active { transform: scale(0.95); }
+
+    body.app-shell .avc-btn.save { color: var(--primary); }
+    body.app-shell .avc-btn.del { color: var(--danger); }
+
+    body.app-shell .app-empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+
+    body.app-shell .app-empty-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    body.app-shell .app-empty-sub {
+      font-size: 0.85rem;
+    }
+
+    /* -- app report -- */
+    body.app-shell #report-view {
+      padding: 0 16px;
+    }
+
+    body.app-shell #report-view .card {
+      padding: 0;
+    }
+
+    body.app-shell pre {
+      font-size: 0.72rem;
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.6);
+    }
+
+    /* desktop: hide app-only elements */
+    .app-actions { display: none; }
+    .app-list { display: none; }
+
+    body.app-shell .action-row { display: none; }
+  </style>
+</head>
+
+<body>
+  <div class="header">
+    <h1>历史记录追踪</h1>
+    <a href="/" class="nav-btn">&larr; 返回监控</a>
+  </div>
+  <div class="wrap">
+    <div class="card main-card" style="margin-bottom: 24px;">
+      <div class="action-row">
+        <button class="primary" onclick="loadVisits()">刷新记录</button>
+        <button class="danger" onclick="bulkDelete()">删除选中</button>
+        <button onclick="loadDaily()">日报</button>
+        <button onclick="loadWeekly()">周报</button>
+      </div>
+
+      <div class="app-actions">
+        <button class="app-action-btn primary" onclick="loadVisits()">刷新</button>
+        <button class="app-action-btn danger" onclick="bulkDelete()">删除选中</button>
+        <button class="app-action-btn" onclick="loadDaily()">日报</button>
+        <button class="app-action-btn" onclick="loadWeekly()">周报</button>
+      </div>
+
+      <div class="desktop-table" style="overflow-x: auto;">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th style="width: 40px; text-align: center;"><input type="checkbox" id="selectAll" onclick="toggleAll(this)" /></th>
+              <th style="width: 30px;"></th>
+              <th>人员标识 (ID)</th>
+              <th>追踪次数</th>
+              <th>首次出现</th>
+              <th>最后出现</th>
+              <th>单次时长(秒)</th>
+              <th>人员状态</th>
+              <th style="width: 200px;">备注与标签</th>
+              <th style="width: 140px;">操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="app-list" id="app-list"></div>
+    </div>
+
+    <div class="card" id="report-view" style="display: none;">
+      <h2 class="report-title">报表数据</h2>
+      <pre id="report">{}</pre>
+    </div>
+  </div>
+
+  <script>
+    const isAppShell = navigator.userAgent.includes("IntelligentFlowShell");
+    if (isAppShell) document.body.classList.add("app-shell");
+
+    function formatTime(iso) {
+      if (!iso) return "-";
+      const ts = iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z";
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return iso.split(".")[0].replace("T", " ");
+      const p = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
+
+    function formatShort(iso) {
+      if (!iso) return "-";
+      const ts = iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z";
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return iso.split(".")[0].replace("T", " ");
+      const p = (n) => String(n).padStart(2, "0");
+      return `${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    function groupByPerson(rows) {
+      const map = new Map();
+      for (const r of rows) {
+        if (!map.has(r.person_id)) map.set(r.person_id, []);
+        map.get(r.person_id).push(r);
+      }
+      return map;
+    }
+
+    function toggleGroup(pid) {
+      const ch = document.querySelectorAll(`.child-${CSS.escape(pid)}`);
+      const ar = document.getElementById(`arrow-${pid}`);
+      if (!ch.length) return;
+      const vis = !ch[0].classList.contains("hidden");
+      ch.forEach(el => el.classList.toggle("hidden", vis));
+      if (ar) ar.classList.toggle("open", !vis);
+    }
+
+    async function loadVisits() {
+      const tbody = document.querySelector("#tbl tbody");
+      const appList = document.getElementById("app-list");
+      tbody.innerHTML = "<tr class='group-child'><td colspan='10' style='text-align:center;'>加载中...</td></tr>";
+      appList.innerHTML = "";
+
+      try {
+        const res = await fetch("/api/visits?limit=200");
+        if (!res.ok) throw new Error(`请求失败: ${res.status}`);
+        const rows = await res.json();
+        tbody.innerHTML = "";
+        appList.innerHTML = "";
+        if (!Array.isArray(rows)) throw new Error("返回数据格式错误");
+
+        if (rows.length === 0) {
+          tbody.innerHTML = "<tr class='group-child'><td colspan='10' style='text-align:center; color: var(--text-muted);'>暂无记录</td></tr>";
+          appList.innerHTML = `<div class="app-empty"><div class="app-empty-title">暂无访问记录</div><div class="app-empty-sub">系统开始运行后，识别到的人员会显示在这里</div></div>`;
+          return;
+        }
+
+        const groups = groupByPerson(rows);
+        for (const [pid, items] of groups) {
+          const count = items.length;
+          const first = formatTime(items[items.length - 1].appeared_at);
+          const last = formatTime(items[0].appeared_at);
+          const firstS = formatShort(items[items.length - 1].appeared_at);
+          const lastS = formatShort(items[0].appeared_at);
+          const totalStay = items.reduce((s, r) => s + r.stay_seconds, 0);
+          const hasActive = items.some(r => r.status === "在场");
+          const latestNote = (items.find(r => (r.note || "").trim()) || items[0]).note || "";
+          const safeNote = latestNote.replace(/"/g, "&quot;");
+          const statusHtml = hasActive ? '<span class="status-badge status-active">在场</span>' : '<span class="status-badge status-left">已离开</span>';
+
+          // --- Desktop table ---
+          const tr = document.createElement("tr");
+          tr.className = "group-header";
+          tr.onclick = () => toggleGroup(pid);
+          tr.innerHTML = `
+            <td style="text-align:center;"><input type="checkbox" class="cb-group" data-pid="${pid}" onclick="event.stopPropagation(); toggleGroupCB('${pid}', this.checked)" /></td>
+            <td><span class="toggle-arrow" id="arrow-${pid}">&#9654;</span></td>
+            <td><strong style="color:var(--primary); font-family:monospace;">${pid}</strong></td>
+            <td>${count} 行程</td>
+            <td>${first}</td>
+            <td>${last}</td>
+            <td><span style="color:#a5b4fc">${totalStay.toFixed(1)}s</span></td>
+            <td>${statusHtml}</td>
+            <td><input type="text" id="group-note-${pid}" value="${safeNote}" onclick="event.stopPropagation()" placeholder="添加备注..." /></td>
+            <td>
+              <button onclick="event.stopPropagation(); saveGroupNote('${pid}')">保存</button>
+              <button onclick="event.stopPropagation(); deleteVisit(${items[0].id})" style="color:var(--danger); border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.05);">删除</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+
+          for (const row of items) {
+            const ctr = document.createElement("tr");
+            ctr.className = `group-child child-${pid} hidden`;
+            const sn = (row.note || "").replace(/"/g, "&quot;");
+            const rStatusHtml = (row.status === "在场") ? '<span class="status-badge status-active">在场</span>' : '<span class="status-badge status-left">已离开</span>';
+            ctr.innerHTML = `
+              <td style="text-align:center;"><input type="checkbox" class="cb-item cb-item-${pid}" value="${row.id}" onclick="event.stopPropagation(); checkItem()" /></td>
+              <td></td>
+              <td style="padding-left:16px; opacity:0.6; font-family:monospace;">#${row.id}</td>
+              <td>&mdash;</td>
+              <td>${formatTime(row.appeared_at)}</td>
+              <td>${formatTime(row.left_at)}</td>
+              <td>${row.stay_seconds.toFixed(2)}s</td>
+              <td>${rStatusHtml}</td>
+              <td><input type="text" id="note-${row.id}" value="${sn}" placeholder="..." /></td>
+              <td>
+                <button onclick="saveNote(${row.id})">保存</button>
+                <button onclick="deleteVisit(${row.id})" style="color:var(--danger);">删除</button>
+              </td>
+            `;
+            tbody.appendChild(ctr);
+          }
+
+          // --- App card ---
+          const stayDisplay = totalStay >= 60 ? `${(totalStay / 60).toFixed(1)}m` : `${totalStay.toFixed(0)}s`;
+          const card = document.createElement("div");
+          card.className = "app-visit-card";
+          card.innerHTML = `
+            <div class="avc-top">
+              <span class="avc-pid">${pid}</span>
+              ${statusHtml}
+            </div>
+            <div class="avc-metrics">
+              <div class="avc-metric">
+                <div class="avc-metric-label">行程</div>
+                <div class="avc-metric-value">${count}</div>
+              </div>
+              <div class="avc-metric">
+                <div class="avc-metric-label">总时长</div>
+                <div class="avc-metric-value">${stayDisplay}</div>
+              </div>
+              <div class="avc-metric">
+                <div class="avc-metric-label">最后出现</div>
+                <div class="avc-metric-value" style="font-size:0.78rem;">${lastS}</div>
+              </div>
+            </div>
+            <div class="avc-time">
+              <span>首次: ${firstS}</span>
+              <span>最后: ${lastS}</span>
+            </div>
+            <div class="avc-bottom">
+              <input type="checkbox" class="cb-item" value="${items[0].id}" />
+              <input type="text" id="m-note-${pid}" value="${safeNote}" placeholder="添加备注..." />
+              <button class="avc-btn save" onclick="saveGroupNote('${pid}', 'm-note-${pid}')">保存</button>
+              <button class="avc-btn del" onclick="deleteVisit(${items[0].id})">删除</button>
+            </div>
+          `;
+          appList.appendChild(card);
+        }
+      } catch (err) {
+        document.getElementById("report-view").style.display = "block";
+        document.getElementById("report").innerText = `加载失败: ${err.message}`;
+      }
+      checkItem();
+    }
+
+    function toggleAll(cb) {
+      document.querySelectorAll('.cb-group, .cb-item').forEach(el => el.checked = cb.checked);
+    }
+    function toggleGroupCB(pid, checked) {
+      document.querySelectorAll(`.cb-item-${CSS.escape(pid)}`).forEach(el => el.checked = checked);
+      checkItem();
+    }
+    function checkItem() {
+      const all = document.querySelectorAll('.cb-item');
+      const sa = document.getElementById('selectAll');
+      if (!all.length) { if (sa) sa.checked = false; return; }
+      if (sa) sa.checked = Array.from(all).every(el => el.checked);
+    }
+
+    async function bulkDelete() {
+      const sel = Array.from(document.querySelectorAll('.cb-item:checked')).map(el => parseInt(el.value));
+      if (!sel.length) return alert("请先选择要删除的记录");
+      if (!confirm(`确定要删除选中的 ${sel.length} 条记录吗？`)) return;
+      await fetch('/api/visits/bulk-delete', { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ visit_ids: sel }) });
+      const sa = document.getElementById('selectAll');
+      if (sa) sa.checked = false;
+      await loadVisits();
+    }
+
+    async function saveGroupNote(pid, inputId) {
+      const el = document.getElementById(inputId || `group-note-${pid}`);
+      const note = el ? el.value : "";
+      await fetch(`/api/persons/${encodeURIComponent(pid)}/note`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) });
+      await loadVisits();
+    }
+
+    async function saveNote(visitId) {
+      const el = document.getElementById(`note-${visitId}`);
+      const note = el ? el.value : "";
+      await fetch(`/api/visits/${visitId}/note`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) });
+      await loadVisits();
+    }
+
+    async function deleteVisit(visitId) {
+      if (!confirm("确定删除该记录？")) return;
+      await fetch(`/api/visits/${visitId}`, { method: "DELETE" });
+      await loadVisits();
+    }
+
+    async function displayReport(url) {
+      document.getElementById("report-view").style.display = "block";
+      document.getElementById("report").innerText = "生成中...";
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        document.getElementById("report").innerText = JSON.stringify(data, null, 2);
+      } catch (e) {
+        document.getElementById("report").innerText = "报表加载失败";
+      }
+    }
+
+    function loadDaily() { displayReport("/api/reports/daily"); }
+    function loadWeekly() { displayReport("/api/reports/weekly"); }
+
+    loadVisits();
+  </script>
+</body>
+
+</html>

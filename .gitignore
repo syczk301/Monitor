@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+camera_monitor.egg-info/
+data/*.db
+data/*.sqlite
+yolov8n.pt
+yolov8s.pt
+.env
+Caddy.local.env
+Caddyfile.local
+caddy/
+docs/_site/
+uvicorn.*.log
+
+# Android
+android-app/.gradle/
+android-app/.kotlin/
+android-app/.idea/
+android-app/build/
+android-app/app/build/
+android-app/local.properties
