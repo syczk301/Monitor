@@ -23,6 +23,11 @@ class MonitorApiService(
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
+    private fun JSONObject.optNullableString(name: String): String? {
+        if (!has(name) || isNull(name)) return null
+        return optString(name).takeIf { it.isNotEmpty() }
+    }
+
     private fun Request.Builder.withAuth(): Request.Builder {
         if (username.isNotBlank()) {
             header("Authorization", Credentials.basic(username, password))
@@ -87,8 +92,8 @@ class MonitorApiService(
             Visit(
                 id = j.getInt("id"),
                 personId = j.getString("person_id"),
-                appearedAt = j.optString("appeared_at", null),
-                leftAt = j.optString("left_at", null),
+                appearedAt = j.optNullableString("appeared_at"),
+                leftAt = j.optNullableString("left_at"),
                 staySeconds = j.optDouble("stay_seconds", 0.0),
                 note = j.optString("note", ""),
                 status = j.optString("status", "")
@@ -152,6 +157,8 @@ class MonitorApiService(
     }
 
     fun streamUrl(): String = "$baseUrl/stream"
+    fun audioUrl(): String = "$baseUrl/api/audio/pcm"
     fun streamAuthHeader(): String? =
         if (username.isNotBlank()) Credentials.basic(username, password) else null
+    fun audioAuthHeader(): String? = streamAuthHeader()
 }

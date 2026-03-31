@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -138,6 +139,17 @@ def capture_info() -> dict:
     return services.pipeline.get_capture_info()
 
 
+@router.get("/audio/info")
+def audio_info() -> dict:
+    return {
+        "sample_rate": services.audio.sample_rate,
+        "channels": services.audio.channels,
+        "dtype": services.audio.dtype,
+        "status": "ok" if not services.audio.last_error else "degraded",
+        "last_error": services.audio.last_error,
+    }
+
+
 class CameraSettingsPayload(BaseModel):
     width: int = Field(ge=640, le=3840)
     height: int = Field(ge=480, le=2160)
@@ -173,6 +185,7 @@ def create_fastapi_app() -> FastAPI:
             if services.pipeline._idle_timer is not None:
                 services.pipeline._idle_timer.cancel()
         services.pipeline.stop()
+        services.audio.stop()
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request) -> HTMLResponse:
@@ -203,6 +216,37 @@ def create_fastapi_app() -> FastAPI:
         return StreamingResponse(
             mjpeg_stream(),
             media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+
+    @app.get("/api/audio/pcm")
+    async def audio_pcm(request: Request) -> StreamingResponse:
+        try:
+            subscriber_id, subscriber_queue = services.audio.subscribe()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        async def pcm_stream():
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        chunk = subscriber_queue.get(timeout=1.0)
+                    except queue.Empty:
+                        continue
+                    yield chunk
+            finally:
+                services.audio.unsubscribe(subscriber_id)
+
+        return StreamingResponse(
+            pcm_stream(),
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Audio-Sample-Rate": str(services.audio.sample_rate),
+                "X-Audio-Channels": str(services.audio.channels),
+                "X-Audio-DType": services.audio.dtype,
+            },
         )
 
     @app.get("/stats")

@@ -193,6 +193,13 @@
       gap: 12px;
     }
 
+    .monitor-toolbar-buttons {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     .monitor-toolbar-hint {
       font-size: 0.85rem;
       color: var(--text-muted);
@@ -471,7 +478,10 @@
         <h2 style="margin:0;">实时监控画面</h2>
         <div class="monitor-toolbar">
           <span class="monitor-toolbar-hint">滚轮缩放，拖动平移；"区域圈选"用于高级微调</span>
-          <button id="roi-toggle" type="button" class="tool-btn">高级圈选</button>
+          <div class="monitor-toolbar-buttons">
+            <button id="sound-toggle" type="button" class="tool-btn">开启声音</button>
+            <button id="roi-toggle" type="button" class="tool-btn">高级圈选</button>
+          </div>
         </div>
       </div>
       <div style="position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);"
@@ -481,11 +491,13 @@
           <div id="roi-layer" style="position: absolute; top:0; left:0; right:0; bottom:0; cursor: grab;"></div>
         </div>
         <div class="app-float-bar">
+          <button id="app-sound-toggle" type="button" class="app-float-btn">开启声音</button>
           <button id="app-roi-toggle" type="button" class="app-float-btn" onclick="document.getElementById('roi-toggle').click()">区域圈选</button>
           <button class="app-float-btn" onclick="location.reload()">刷新画面</button>
         </div>
       </div>
       <p id="stream-error" style="color: #ef4444; margin-top: 12px; font-size: 0.9em;"></p>
+      <p id="audio-status" style="color: var(--text-muted); margin-top: 8px; font-size: 0.85em;">声音默认关闭，点击“开启声音”后播放后端机器默认麦克风。</p>
       <div class="roi-section">
         <h2 style="margin:18px 0 12px;">ROI 检测参数</h2>
         <div id="roi-configs" class="roi-configs"></div>
@@ -549,6 +561,9 @@
 
     const roiToggle = document.getElementById("roi-toggle");
     const appRoiToggle = document.getElementById("app-roi-toggle");
+    const soundToggle = document.getElementById("sound-toggle");
+    const appSoundToggle = document.getElementById("app-sound-toggle");
+    const audioStatus = document.getElementById("audio-status");
 
     const streamImage = document.getElementById("stream");
     const streamError = document.getElementById("stream-error");
@@ -569,6 +584,157 @@
     let isPanning = false;
     let startPanX = 0;
     let startPanY = 0;
+    let audioEnabled = false;
+    let audioConnecting = false;
+    let audioContext = null;
+    let audioAbortController = null;
+    let pendingAudioBytes = new Uint8Array(0);
+    let nextAudioStartTime = 0;
+
+    function setAudioStatus(message, color = "var(--text-muted)") {
+      audioStatus.textContent = message;
+      audioStatus.style.color = color;
+    }
+
+    function updateSoundButtons() {
+      const label = audioEnabled ? "关闭声音" : "开启声音";
+      if (soundToggle) {
+        soundToggle.textContent = label;
+        soundToggle.classList.toggle("active", audioEnabled);
+        soundToggle.disabled = audioConnecting;
+      }
+      if (appSoundToggle) {
+        appSoundToggle.textContent = label;
+        appSoundToggle.classList.toggle("active", audioEnabled);
+        appSoundToggle.disabled = audioConnecting;
+      }
+    }
+
+    function appendUint8Arrays(left, right) {
+      const merged = new Uint8Array(left.length + right.length);
+      merged.set(left, 0);
+      merged.set(right, left.length);
+      return merged;
+    }
+
+    function pcm16ToFloat32(pcm16, sourceRate, targetRate) {
+      if (!pcm16.length) return new Float32Array(0);
+      if (sourceRate === targetRate) {
+        const out = new Float32Array(pcm16.length);
+        for (let i = 0; i < pcm16.length; i++) out[i] = Math.max(-1, Math.min(1, pcm16[i] / 32768));
+        return out;
+      }
+      const targetLength = Math.max(1, Math.round(pcm16.length * targetRate / sourceRate));
+      const out = new Float32Array(targetLength);
+      for (let i = 0; i < targetLength; i++) {
+        const srcPos = i * (sourceRate / targetRate);
+        const leftIndex = Math.floor(srcPos);
+        const rightIndex = Math.min(pcm16.length - 1, leftIndex + 1);
+        const t = srcPos - leftIndex;
+        const sample = pcm16[leftIndex] + (pcm16[rightIndex] - pcm16[leftIndex]) * t;
+        out[i] = Math.max(-1, Math.min(1, sample / 32768));
+      }
+      return out;
+    }
+
+    function queueAudioChunk(pcm16, sampleRate) {
+      if (!audioContext || !pcm16.length) return;
+      const floatSamples = pcm16ToFloat32(pcm16, sampleRate, audioContext.sampleRate);
+      if (!floatSamples.length) return;
+      const buffer = audioContext.createBuffer(1, floatSamples.length, audioContext.sampleRate);
+      buffer.copyToChannel(floatSamples, 0);
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioContext.destination);
+      const startAt = Math.max(nextAudioStartTime, audioContext.currentTime + 0.03);
+      source.start(startAt);
+      nextAudioStartTime = startAt + buffer.duration;
+      if (nextAudioStartTime - audioContext.currentTime > 1.0) {
+        nextAudioStartTime = audioContext.currentTime + 0.2;
+      }
+    }
+
+    async function stopAudioStream(updateText = true) {
+      audioEnabled = false;
+      audioConnecting = false;
+      updateSoundButtons();
+      pendingAudioBytes = new Uint8Array(0);
+      nextAudioStartTime = 0;
+      if (audioAbortController) {
+        audioAbortController.abort();
+        audioAbortController = null;
+      }
+      if (audioContext) {
+        try { await audioContext.close(); } catch (e) { }
+        audioContext = null;
+      }
+      if (updateText) setAudioStatus("声音已关闭。", "var(--text-muted)");
+    }
+
+    async function startAudioStream() {
+      if (audioEnabled) return;
+      try {
+        audioConnecting = true;
+        updateSoundButtons();
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) throw new Error("当前浏览器不支持音频播放");
+        audioContext = new AudioCtx();
+        if (audioContext.state === "suspended") await audioContext.resume();
+        audioAbortController = new AbortController();
+        pendingAudioBytes = new Uint8Array(0);
+        nextAudioStartTime = audioContext.currentTime + 0.1;
+
+        const response = await fetch("/api/audio/pcm", {
+          signal: audioAbortController.signal,
+          cache: "no-store",
+        });
+        if (!response.ok || !response.body) {
+          throw new Error(`麦克风流不可用 (${response.status})`);
+        }
+        const sampleRate = parseInt(response.headers.get("X-Audio-Sample-Rate") || "16000", 10);
+        audioEnabled = true;
+        audioConnecting = false;
+        updateSoundButtons();
+        setAudioStatus("声音已开启，正在播放后端默认麦克风。", "var(--accent)");
+
+        const reader = response.body.getReader();
+        while (audioEnabled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value || !value.length) continue;
+
+          let merged = appendUint8Arrays(pendingAudioBytes, value);
+          if (merged.length % 2 !== 0) {
+            pendingAudioBytes = merged.slice(merged.length - 1);
+            merged = merged.slice(0, merged.length - 1);
+          } else {
+            pendingAudioBytes = new Uint8Array(0);
+          }
+          if (!merged.length) continue;
+
+          const pcm16 = new Int16Array(merged.buffer, merged.byteOffset, merged.byteLength / 2);
+          queueAudioChunk(pcm16, sampleRate);
+        }
+
+        if (audioEnabled) {
+          throw new Error("音频连接已中断");
+        }
+      } catch (error) {
+        const aborted = error && error.name === "AbortError";
+        await stopAudioStream(!aborted);
+        if (!aborted) {
+          setAudioStatus(`声音开启失败：${error.message || "未知错误"}`, "#ef4444");
+        }
+      }
+    }
+
+    async function toggleAudioStream() {
+      if (audioEnabled) {
+        await stopAudioStream(true);
+      } else {
+        await startAudioStream();
+      }
+    }
 
     function clampPan() {
       if (scale <= 1) { panX = 0; panY = 0; return; }
@@ -607,6 +773,8 @@
     }
 
     roiToggle.addEventListener("click", () => setRoiDrawEnabled(!roiDrawEnabled));
+    if (soundToggle) soundToggle.addEventListener("click", toggleAudioStream);
+    if (appSoundToggle) appSoundToggle.addEventListener("click", toggleAudioStream);
 
     streamContainer.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -828,6 +996,7 @@
     });
 
     loadCamSettings();
+    updateSoundButtons();
   </script>
 </body>
 

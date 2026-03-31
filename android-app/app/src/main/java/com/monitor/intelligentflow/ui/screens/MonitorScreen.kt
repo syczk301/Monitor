@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import com.monitor.intelligentflow.data.MonitorApiService
 import com.monitor.intelligentflow.data.Stats
 import com.monitor.intelligentflow.ui.components.MjpegView
+import com.monitor.intelligentflow.ui.components.PcmAudioPlayer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -54,7 +57,15 @@ fun MonitorScreen(
     var stats by remember { mutableStateOf(Stats()) }
     var connected by remember { mutableStateOf(false) }
     var isFullscreen by remember { mutableStateOf(false) }
+    var audioEnabled by rememberSaveable { mutableStateOf(false) }
+    var audioError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val audioPlayer = remember(api) {
+        PcmAudioPlayer { message ->
+            audioError = message
+            audioEnabled = false
+        }
+    }
 
     fun enterFullscreen() {
         isFullscreen = true
@@ -76,6 +87,22 @@ fun MonitorScreen(
         onDispose {
             (context as? Activity)?.requestedOrientation =
                 ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            audioPlayer.stop()
+        }
+    }
+
+    DisposableEffect(audioEnabled, api) {
+        if (audioEnabled) {
+            audioError = null
+            audioPlayer.start(
+                url = api.audioUrl(),
+                authHeader = api.audioAuthHeader()
+            )
+        } else {
+            audioPlayer.stop()
+        }
+        onDispose {
+            audioPlayer.stop()
         }
     }
 
@@ -118,6 +145,32 @@ fun MonitorScreen(
                 }
 
                 Spacer(Modifier.height(24.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = { audioEnabled = !audioEnabled },
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text(if (audioEnabled) "关闭声音" else "开启声音", fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        text = audioError ?: if (audioEnabled) "正在播放后端默认麦克风" else "声音默认关闭",
+                        modifier = Modifier.align(Alignment.CenterVertically),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (audioError == null) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        }
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
 
                 Box(
                     modifier = Modifier

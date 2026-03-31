@@ -6,6 +6,7 @@ Right-click for menu: start/stop server, auto-start toggle, exit.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import sys
@@ -57,6 +58,13 @@ class ServerManager:
                 sys.stdout = open(os.devnull, "w")
             if sys.stderr is None:
                 sys.stderr = open(os.devnull, "w")
+            # Restarting only the uvicorn thread inside the tray process keeps
+            # previously imported app modules cached. Drop them so code changes
+            # are picked up without fully replacing the tray process.
+            for name in list(sys.modules):
+                if name == "app" or name.startswith("app."):
+                    sys.modules.pop(name, None)
+            importlib.invalidate_caches()
             import uvicorn
             config = uvicorn.Config(
                 "app.api.main:app", host=HOST, port=PORT,

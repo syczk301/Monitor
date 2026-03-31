@@ -21,6 +21,7 @@
 - **ROI 分析**: 区域占用状态监测与自动对焦
 - **数据统计**: 日报/周报自动聚合
 - **双端访问**: Web 模板页面 + 原生 Android App
+- **实时监听**: Web / Android 可手动开启后端机器默认麦克风声音
 
 ## 技术栈
 
@@ -41,6 +42,7 @@
 | UI 框架 | Jetpack Compose (Material 3) |
 | 网络请求 | OkHttp |
 | 视频流 | 自定义 MJPEG 解码器 |
+| 音频播放 | AudioTrack PCM 流播放 |
 | 状态管理 | ViewModel + StateFlow |
 | 本地存储 | DataStore Preferences |
 
@@ -87,6 +89,7 @@ monitor/
 
 - Python >= 3.10
 - Android Studio (客户端开发)
+- 后端机器存在可用默认麦克风设备
 
 ### 后端启动
 
@@ -132,6 +135,9 @@ cd android-app
 | `USE_MONGODB_IDENTITY_TEMPLATES` | 是否使用 MongoDB 存储身份模板 |
 | `MONGODB_URI` | MongoDB 连接字符串 |
 | `CADDY_BASIC_AUTH_USER` | Caddy 反向代理认证用户名 |
+| `AUDIO_SAMPLE_RATE` | 后端麦克风采样率 |
+| `AUDIO_CHANNELS` | 麦克风通道数，默认 1 |
+| `AUDIO_BLOCK_FRAMES` | 音频流分块帧数 |
 
 更多配置项参见 `app/config.py` 中的 `Settings` 类。
 

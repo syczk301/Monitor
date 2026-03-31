@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.audio_stream import AudioStreamConfig, MicrophoneAudioStreamer
 from app.analytics.report import ReportService
 from app.config import settings
 from app.core.pipeline import VideoAnalyticsPipeline
@@ -49,6 +50,13 @@ class AppServices:
                 self.identity_store = self.repository
 
         self.reports = ReportService(self.repository)
+        self.audio = MicrophoneAudioStreamer(
+            AudioStreamConfig(
+                sample_rate=settings.audio_sample_rate,
+                channels=settings.audio_channels,
+                block_frames=settings.audio_block_frames,
+            )
+        )
         self.pipeline = VideoAnalyticsPipeline(
             repository=self.repository,
             identity_store=self.identity_store,
