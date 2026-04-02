@@ -144,3 +144,41 @@ ValueError: Unable to configure formatter 'default'
 2026-04-01 02:03:14,561 INFO Waiting for application startup.
 2026-04-01 02:03:14,563 INFO Application startup complete.
 2026-04-01 02:03:14,564 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-01 18:44:28,526 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-01 18:44:28,719 INFO Server starting on 0.0.0.0:8000
+2026-04-01 18:44:54,885 INFO Started server process [15088]
+2026-04-01 18:44:54,886 INFO Waiting for application startup.
+2026-04-01 18:44:54,893 INFO Application startup complete.
+2026-04-01 18:44:54,893 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-01 19:01:31,076 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-01 19:01:31,260 INFO Server starting on 0.0.0.0:8000
+2026-04-01 19:01:57,278 INFO Started server process [4252]
+2026-04-01 19:01:57,278 INFO Waiting for application startup.
+2026-04-01 19:01:57,285 INFO Application startup complete.
+2026-04-01 19:01:57,286 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-01 21:13:01,883 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-01 21:13:02,082 INFO Server starting on 0.0.0.0:8000
+2026-04-01 21:13:14,080 INFO Started server process [7460]
+2026-04-01 21:13:14,081 INFO Waiting for application startup.
+2026-04-01 21:13:14,087 INFO Application startup complete.
+2026-04-01 21:13:14,087 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-01 22:51:37,375 INFO Shutting down
+2026-04-01 22:51:37,477 INFO Waiting for application shutdown.
+2026-04-01 22:51:38,303 INFO Application shutdown complete.
+2026-04-01 22:51:38,303 INFO Finished server process [7460]
+2026-04-01 22:51:38,304 INFO Server stopped
+2026-04-01 22:51:57,186 INFO Server starting on 0.0.0.0:8000
+2026-04-01 22:52:04,242 INFO Started server process [7460]
+2026-04-01 22:52:04,243 INFO Waiting for application startup.
+2026-04-01 22:52:04,244 INFO Application startup complete.
+2026-04-01 22:52:04,245 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-01 22:56:36,479 INFO Shutting down
+2026-04-01 22:56:36,581 INFO Waiting for application shutdown.
+2026-04-01 22:56:36,825 INFO Application shutdown complete.
+2026-04-01 22:56:36,825 INFO Finished server process [7460]
+2026-04-01 22:56:36,826 INFO Server stopped
+2026-04-01 22:56:40,030 INFO Server starting on 0.0.0.0:8000
+2026-04-01 22:56:53,384 INFO Started server process [7460]
+2026-04-01 22:56:53,384 INFO Waiting for application startup.
+2026-04-01 22:56:53,386 INFO Application startup complete.
+2026-04-01 22:56:53,386 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)

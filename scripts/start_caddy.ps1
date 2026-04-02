@@ -1,6 +1,35 @@
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
+function Import-EnvFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return
+    }
+
+    Get-Content $Path | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith("#")) {
+            return
+        }
+
+        $parts = $line -split "=", 2
+        if ($parts.Count -ne 2) {
+            return
+        }
+
+        $name = $parts[0].Trim()
+        $value = $parts[1].Trim().Trim('"')
+        if ($name) {
+            [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
+    }
+}
+
 function Resolve-CaddyPath {
     $cmd = Get-Command caddy -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -31,6 +60,8 @@ function Resolve-CaddyPath {
 }
 
 $caddy = Resolve-CaddyPath
+$envFile = Join-Path $repoRoot "Caddy.local.env"
+Import-EnvFile -Path $envFile
 $user = $env:CADDY_BASIC_AUTH_USER
 $hash = $env:CADDY_BASIC_AUTH_HASH
 
@@ -38,14 +69,13 @@ if ([string]::IsNullOrWhiteSpace($user) -or [string]::IsNullOrWhiteSpace($hash))
     throw "缺少 CADDY_BASIC_AUTH_USER 或 CADDY_BASIC_AUTH_HASH 环境变量。"
 }
 
-$existing = Get-CimInstance Win32_Process |
-    Where-Object { $_.Name -eq "caddy.exe" -or $_.CommandLine -like "*caddy run*" }
+$existing = Get-Process -Name "caddy" -ErrorAction SilentlyContinue
 
 foreach ($proc in $existing) {
     try {
-        Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
+        Stop-Process -Id $proc.Id -Force -ErrorAction Stop
     } catch {
-        Write-Warning "无法停止旧的 Caddy 进程: $($proc.ProcessId)"
+        Write-Warning "无法停止旧的 Caddy 进程: $($proc.Id)"
     }
 }
 

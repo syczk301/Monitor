@@ -94,8 +94,8 @@ class Settings(BaseModel):
     tracker_low_conf_iou_threshold: float = 0.16
     tracker_display_max_missed: int = 3
     tracker_min_confirmed_hits: int = 2
-    camera_width: int = int(os.getenv("CAMERA_WIDTH", "1920"))
-    camera_height: int = int(os.getenv("CAMERA_HEIGHT", "1080"))
+    camera_width: int = int(os.getenv("CAMERA_WIDTH", "3840"))
+    camera_height: int = int(os.getenv("CAMERA_HEIGHT", "2160"))
     mjpeg_quality: int = int(os.getenv("MJPEG_QUALITY", "85"))
     target_fps: int = int(os.getenv("TARGET_FPS", "30"))
     audio_sample_rate: int = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
