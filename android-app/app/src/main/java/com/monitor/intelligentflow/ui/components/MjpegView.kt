@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -40,14 +41,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +68,7 @@ private const val AI_ZOOM_THRESHOLD = 1.5f
 private const val AI_REFRESH_MS = 200L
 private const val AI_DEBOUNCE_MS = 120L
 private const val MAX_SR_INPUT = 480
+private const val AI_MAX_SOURCE_EDGE = 1280
 
 @Composable
 fun MjpegView(
@@ -161,7 +166,8 @@ fun MjpegView(
         }
         while (true) {
             val frame = currentFrame
-            if (frame != null && containerW > 0 && scale > AI_ZOOM_THRESHOLD) {
+            val aiEligible = frame != null && maxOf(frame.width, frame.height) <= AI_MAX_SOURCE_EDGE
+            if (frame != null && aiEligible && containerW > 0 && scale > AI_ZOOM_THRESHOLD) {
                 val s = scale
                 val o = offset
                 val cw = containerW
@@ -198,9 +204,11 @@ fun MjpegView(
 
         AnimatedVisibility(visible = frame != null, enter = fadeIn(), exit = fadeOut()) {
             if (frame != null) {
+                val frameAspectRatio = frame.width.toFloat() / frame.height.toFloat()
                 Box(
                     modifier = Modifier
-                        .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
+                        .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(frameAspectRatio))
+                        .clipToBounds()
                         .pointerInput(Unit) {
                             detectTransformGestures { _, pan, zoom, _ ->
                                 val newScale = (scale * zoom).coerceIn(1f, 5f)
@@ -234,18 +242,13 @@ fun MjpegView(
                             )
                         }
                 ) {
-                    Image(
-                        bitmap = frame.asImageBitmap(),
-                        contentDescription = "live stream",
+                    BitmapViewport(
+                        bitmap = frame,
+                        scale = scale,
+                        offset = offset,
+                        isFullscreen = isFullscreen,
                         modifier = Modifier
-                            .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth())
-                            .graphicsLayer(
-                                scaleX = scale,
-                                scaleY = scale,
-                                translationX = offset.x,
-                                translationY = offset.y
-                            ),
-                        contentScale = if (isFullscreen) ContentScale.Fit else ContentScale.FillWidth
+                            .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.fillMaxSize())
                     )
 
                     val enhanced = enhancedFrame
@@ -334,6 +337,64 @@ fun MjpegView(
                 modifier = Modifier.size(20.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun BitmapViewport(
+    bitmap: Bitmap,
+    scale: Float,
+    offset: Offset,
+    isFullscreen: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
+    Canvas(modifier = modifier) {
+        val bw = bitmap.width.toFloat()
+        val bh = bitmap.height.toFloat()
+        val cw = size.width
+        val ch = size.height
+        if (bw <= 0f || bh <= 0f || cw <= 0f || ch <= 0f) return@Canvas
+
+        val baseScale = if (isFullscreen) minOf(cw / bw, ch / bh) else cw / bw
+        val displayedW = bw * baseScale
+        val displayedH = bh * baseScale
+        val imgOffX = (cw - displayedW) / 2f
+        val imgOffY = (ch - displayedH) / 2f
+
+        if (scale <= 1.001f) {
+            drawImage(
+                image = imageBitmap,
+                dstOffset = IntOffset(imgOffX.toInt(), imgOffY.toInt()),
+                dstSize = IntSize(displayedW.toInt().coerceAtLeast(1), displayedH.toInt().coerceAtLeast(1)),
+                filterQuality = FilterQuality.None
+            )
+            return@Canvas
+        }
+
+        val visCenterX = cw / 2f - offset.x / scale
+        val visCenterY = ch / 2f - offset.y / scale
+        val visW = cw / scale
+        val visH = ch / scale
+
+        val bmpCX = (visCenterX - imgOffX) / baseScale
+        val bmpCY = (visCenterY - imgOffY) / baseScale
+        val bmpW = visW / baseScale
+        val bmpH = visH / baseScale
+
+        val left = (bmpCX - bmpW / 2f).toInt().coerceIn(0, bitmap.width - 1)
+        val top = (bmpCY - bmpH / 2f).toInt().coerceIn(0, bitmap.height - 1)
+        val right = (bmpCX + bmpW / 2f).toInt().coerceIn(left + 1, bitmap.width)
+        val bottom = (bmpCY + bmpH / 2f).toInt().coerceIn(top + 1, bitmap.height)
+
+        drawImage(
+            image = imageBitmap,
+            srcOffset = IntOffset(left, top),
+            srcSize = IntSize((right - left).coerceAtLeast(1), (bottom - top).coerceAtLeast(1)),
+            dstOffset = IntOffset.Zero,
+            dstSize = IntSize(cw.toInt().coerceAtLeast(1), ch.toInt().coerceAtLeast(1)),
+            filterQuality = FilterQuality.None
+        )
     }
 }
 

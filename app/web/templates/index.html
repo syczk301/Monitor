@@ -486,8 +486,8 @@
       </div>
       <div style="position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);"
         id="stream-container">
-        <div id="stream-wrapper" style="position: relative; transform-origin: 0 0; transition: transform 0.05s linear; width: 100%; height: 100%;">
-          <img id="stream" src="/stream" alt="stream" style="border:none; border-radius:0; padding:0; margin:0;" />
+        <div id="stream-wrapper" style="position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform 0.05s linear;">
+          <img id="stream" src="/stream" alt="stream" style="border:none; border-radius:0; padding:0; margin:0; display:block; width:100%; height:100%;" />
           <div id="roi-layer" style="position: absolute; top:0; left:0; right:0; bottom:0; cursor: grab;"></div>
         </div>
         <div class="app-float-bar">
@@ -579,6 +579,9 @@
     let roiDrawEnabled = false;
 
     let scale = 1;
+    let fitScale = 1;
+    let imageWidth = 1280;
+    let imageHeight = 720;
     let panX = 0;
     let panY = 0;
     let isPanning = false;
@@ -736,11 +739,31 @@
       }
     }
 
+    function getDisplayScale() {
+      return fitScale * scale;
+    }
+
+    function syncStreamViewport() {
+      const nw = streamImage.naturalWidth || imageWidth || 1280;
+      const nh = streamImage.naturalHeight || imageHeight || 720;
+      imageWidth = nw;
+      imageHeight = nh;
+      const containerWidth = streamContainer.clientWidth || nw;
+      fitScale = Math.min(1, containerWidth / nw);
+      streamContainer.style.height = `${Math.round(nh * fitScale)}px`;
+      streamWrapper.style.width = `${nw}px`;
+      streamWrapper.style.height = `${nh}px`;
+      updateTransform();
+    }
+
     function clampPan() {
       if (scale <= 1) { panX = 0; panY = 0; return; }
-      const rect = streamContainer.getBoundingClientRect();
-      panX = Math.max(rect.width * (1 - scale), Math.min(0, panX));
-      panY = Math.max(rect.height * (1 - scale), Math.min(0, panY));
+      const containerRect = streamContainer.getBoundingClientRect();
+      const displayScale = getDisplayScale();
+      const scaledWidth = imageWidth * displayScale;
+      const scaledHeight = imageHeight * displayScale;
+      panX = Math.min(0, Math.max(containerRect.width - scaledWidth, panX));
+      panY = Math.min(0, Math.max(containerRect.height - scaledHeight, panY));
     }
 
     function updateInteractionCursor() {
@@ -751,7 +774,8 @@
 
     function updateTransform() {
       clampPan();
-      streamWrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+      const displayScale = getDisplayScale();
+      streamWrapper.style.transform = `translate(${panX}px, ${panY}px) scale(${displayScale})`;
     }
 
     function clearTempRoi() {
@@ -784,9 +808,12 @@
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
       let newScale = Math.max(1, Math.min(scale * zoom, 10));
-      zoom = newScale / scale;
-      panX = mouseX - (mouseX - panX) * zoom;
-      panY = mouseY - (mouseY - panY) * zoom;
+      const oldDisplayScale = getDisplayScale();
+      const newDisplayScale = fitScale * newScale;
+      const imageX = (mouseX - panX) / oldDisplayScale;
+      const imageY = (mouseY - panY) / oldDisplayScale;
+      panX = mouseX - imageX * newDisplayScale;
+      panY = mouseY - imageY * newDisplayScale;
       scale = newScale;
       updateTransform();
     }, { passive: false });
@@ -808,21 +835,19 @@
       if (isPanning) { panX = e.clientX - startPanX; panY = e.clientY - startPanY; updateTransform(); }
     });
     window.addEventListener("mouseup", () => { if (isPanning) { isPanning = false; updateInteractionCursor(); } });
+    window.addEventListener("resize", syncStreamViewport);
     streamContainer.addEventListener("mouseleave", () => { if (isPanning) { isPanning = false; updateInteractionCursor(); } });
     streamContainer.addEventListener("contextmenu", (e) => e.preventDefault());
 
     streamLayer.addEventListener("mousedown", (e) => {
       if (e.target.tagName.toLowerCase() === 'button' || e.button !== 0) return;
       if (!roiDrawEnabled) return;
-      const rect = streamLayer.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / scale;
-      const y = (e.clientY - rect.top) / scale;
-      const nw = streamImage.naturalWidth || 1280;
-      const nh = streamImage.naturalHeight || 720;
-      const dw = rect.width / scale || nw;
-      const dh = rect.height / scale || nh;
-      const realX = Math.round((x / dw) * nw);
-      const realY = Math.round((y / dh) * nh);
+      const rect = streamContainer.getBoundingClientRect();
+      const displayScale = getDisplayScale();
+      const x = Math.max(0, Math.min(imageWidth, (e.clientX - rect.left - panX) / displayScale));
+      const y = Math.max(0, Math.min(imageHeight, (e.clientY - rect.top - panY) / displayScale));
+      const realX = Math.round(x);
+      const realY = Math.round(y);
 
       if (!click1) {
         click1 = { realX, realY, domX: x, domY: y };
@@ -844,9 +869,10 @@
 
     streamLayer.addEventListener("mousemove", (e) => {
       if (!roiDrawEnabled || !click1) return;
-      const rect = streamLayer.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / scale;
-      const y = (e.clientY - rect.top) / scale;
+      const rect = streamContainer.getBoundingClientRect();
+      const displayScale = getDisplayScale();
+      const x = Math.max(0, Math.min(imageWidth, (e.clientX - rect.left - panX) / displayScale));
+      const y = Math.max(0, Math.min(imageHeight, (e.clientY - rect.top - panY) / displayScale));
       const temp = document.getElementById("temp-roi");
       if (temp) {
         temp.style.left = Math.min(click1.domX, x) + "px";
@@ -860,8 +886,11 @@
       try {
         const res = await fetch("/api/rois");
         const rois = await res.json();
-        const nw = streamImage.naturalWidth || 1280;
-        const nh = streamImage.naturalHeight || 720;
+        const nw = streamImage.naturalWidth || imageWidth || 1280;
+        const nh = streamImage.naturalHeight || imageHeight || 720;
+        imageWidth = nw;
+        imageHeight = nh;
+        syncStreamViewport();
 
         Array.from(streamLayer.children).forEach(c => { if (c.id !== "temp-roi") c.remove(); });
         roiConfigs.innerHTML = "";
@@ -877,7 +906,7 @@
           box.className = "roi-box";
           Object.assign(box.style, {
             position: "absolute", border: "2px dashed #10b981", backgroundColor: "rgba(16, 185, 129, 0.1)",
-            left: `${(x1/nw)*100}%`, top: `${(y1/nh)*100}%`, width: `${((x2-x1)/nw)*100}%`, height: `${((y2-y1)/nh)*100}%`
+            left: `${x1}px`, top: `${y1}px`, width: `${x2-x1}px`, height: `${y2-y1}px`
           });
 
           const tag = document.createElement("div");
@@ -913,7 +942,14 @@
       } catch (e) { }
     }
 
-    streamImage.onload = loadRois;
+    streamImage.onload = () => {
+      syncStreamViewport();
+      loadRois();
+    };
+    if (streamImage.complete) {
+      syncStreamViewport();
+      loadRois();
+    }
     setInterval(loadRois, 5000);
 
     async function saveRoiParams(roi) {

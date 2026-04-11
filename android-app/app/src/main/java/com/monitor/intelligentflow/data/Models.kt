@@ -9,6 +9,17 @@ data class Stats(
     val captureBackend: String = "-"
 )
 
+data class CaptureInfo(
+    val requestedWidth: Int = 3840,
+    val requestedHeight: Int = 2160,
+    val actualWidth: Int = 0,
+    val actualHeight: Int = 0,
+    val mjpegQuality: Int = 85,
+    val targetFps: Int = 30,
+    val captureStatus: String = "-",
+    val captureBackend: String = "-"
+)
+
 data class Visit(
     val id: Int,
     val personId: String,
