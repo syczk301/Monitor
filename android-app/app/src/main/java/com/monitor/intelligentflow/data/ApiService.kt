@@ -3,12 +3,14 @@ package com.monitor.intelligentflow.data
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Credentials
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 class MonitorApiService(
@@ -40,6 +42,14 @@ class MonitorApiService(
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
             resp.body?.string() ?: ""
+        }
+    }
+
+    private suspend fun getBytes(url: String): ByteArray = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url(url).withAuth().build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
+            resp.body?.bytes() ?: ByteArray(0)
         }
     }
 
@@ -192,8 +202,45 @@ class MonitorApiService(
         )
     }
 
+    suspend fun getRecordings(): List<RecordingGroup> {
+        val raw = get("/api/recordings")
+        val arr = JSONArray(raw)
+        return (0 until arr.length()).map { i ->
+            val group = arr.getJSONObject(i)
+            val items = group.getJSONArray("items")
+            RecordingGroup(
+                day = group.optString("day", ""),
+                items = (0 until items.length()).map { j ->
+                    val item = items.getJSONObject(j)
+                    RecordingFile(
+                        relativePath = item.optString("relative_path", ""),
+                        filename = item.optString("filename", ""),
+                        startedAt = item.optString("started_at", ""),
+                        sizeBytes = item.optLong("size_bytes", 0L),
+                        modifiedAt = item.optString("modified_at", "")
+                    )
+                }
+            )
+        }
+    }
+
+    suspend fun downloadRecording(relativePath: String, cacheDir: File): File {
+        val recordingsDir = File(cacheDir, "recordings").apply { mkdirs() }
+        val target = File(recordingsDir, relativePath.substringAfterLast('/'))
+        val url = recordingUrl(relativePath)
+        val bytes = getBytes(url)
+        target.writeBytes(bytes)
+        return target
+    }
+
     fun streamUrl(): String = "$baseUrl/stream"
     fun audioUrl(): String = "$baseUrl/api/audio/pcm"
+    fun recordingUrl(relativePath: String): String =
+        baseUrl.toHttpUrl().newBuilder()
+            .addPathSegments("api/recordings/file")
+            .addQueryParameter("path", relativePath)
+            .build()
+            .toString()
     fun streamAuthHeader(): String? =
         if (username.isNotBlank()) Credentials.basic(username, password) else null
     fun audioAuthHeader(): String? = streamAuthHeader()

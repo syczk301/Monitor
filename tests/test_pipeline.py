@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import app.core.pipeline as pipeline_module
 from app.core.entities import InferencePacket, TrackedObject
+import numpy as np
 
 
 class _Dummy:
@@ -201,3 +202,73 @@ def test_segment_output_path_uses_daily_directory(monkeypatch) -> None:
     assert pipeline._segment_output_path(segment_start) == pipeline_module.Path(
         r"D:\download\Monitor\2024-01-02\monitor_20240102_130000.mp4"
     )
+
+
+def test_list_recordings_groups_daily_files(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    repo = _FakeRepository()
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=repo, identity_store=repo, stream_source="0")
+    pipeline._local_recording_output_dir = tmp_path
+    day_dir = tmp_path / "2024-01-02"
+    day_dir.mkdir()
+    (day_dir / "monitor_20240102_130000.mp4").write_bytes(b"a")
+    (tmp_path / "monitor_20240101_120000.mp4").write_bytes(b"b")
+    (day_dir / "monitor_20240102_130000.video.mp4").write_bytes(b"ignore")
+
+    groups = pipeline.list_recordings()
+
+    assert groups[0]["day"] == "2024-01-02"
+    assert groups[0]["items"][0]["relative_path"] == "2024-01-02/monitor_20240102_130000.mp4"
+    assert groups[1]["day"] == "未归档"
+    assert groups[1]["items"][0]["relative_path"] == "monitor_20240101_120000.mp4"
+
+
+def test_resolve_recording_path_rejects_escape(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    repo = _FakeRepository()
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=repo, identity_store=repo, stream_source="0")
+    pipeline._local_recording_output_dir = tmp_path
+
+    try:
+        pipeline.resolve_recording_path("../escape.mp4")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_prepare_recording_frame_caps_output_at_1080p(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    frame = np.zeros((2160, 3840, 3), dtype=np.uint8)
+
+    resized = pipeline_module.VideoAnalyticsPipeline._prepare_recording_frame(frame)
+
+    assert resized.shape[:2] == (1080, 1920)
+
+
+def test_prepare_recording_frame_keeps_smaller_input(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+    resized = pipeline_module.VideoAnalyticsPipeline._prepare_recording_frame(frame)
+
+    assert resized.shape[:2] == (720, 1280)

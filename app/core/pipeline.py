@@ -67,7 +67,20 @@ class RecentlyClosedVisit:
     left_ms: int
 
 
+@dataclass(slots=True)
+class RecordingItem:
+    day: str
+    relative_path: str
+    filename: str
+    started_at: str
+    size_bytes: int
+    modified_at: str
+
+
 class VideoAnalyticsPipeline:
+    _recording_max_width = 1920
+    _recording_max_height = 1080
+
     def __init__(
         self,
         repository: PersonEventRepository,
@@ -375,7 +388,11 @@ class VideoAnalyticsPipeline:
             
             packet = FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=frame)
             self._put_latest(self.frame_queue, packet)
-            self._put_latest(self._video_queue, FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=rendered))
+            recording_frame = self._prepare_recording_frame(rendered)
+            self._put_latest(
+                self._video_queue,
+                FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=recording_frame),
+            )
             frame_id += 1
 
             elapsed = time.monotonic() - loop_start
@@ -781,6 +798,94 @@ class VideoAnalyticsPipeline:
 
     def _segment_directory(self, segment_start: datetime) -> Path:
         return self._local_recording_output_dir / segment_start.strftime("%Y-%m-%d")
+
+    @classmethod
+    def _prepare_recording_frame(cls, frame: np.ndarray) -> np.ndarray:
+        height, width = frame.shape[:2]
+        scale = min(
+            cls._recording_max_width / max(1, width),
+            cls._recording_max_height / max(1, height),
+            1.0,
+        )
+        if scale >= 1.0:
+            return frame
+        target_width = max(2, int(round(width * scale)))
+        target_height = max(2, int(round(height * scale)))
+        if target_width % 2 != 0:
+            target_width -= 1
+        if target_height % 2 != 0:
+            target_height -= 1
+        return cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+
+    def list_recordings(self) -> list[dict]:
+        root = self._local_recording_output_dir
+        if not root.exists():
+            return []
+        items: list[RecordingItem] = []
+        for path in root.rglob("monitor_*.mp4"):
+            if not path.is_file():
+                continue
+            if ".video." in path.name:
+                continue
+            day = path.parent.name if path.parent != root else "未归档"
+            relative_path = path.relative_to(root).as_posix()
+            started_at = self._recording_started_at(path)
+            modified_at = datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+            items.append(
+                RecordingItem(
+                    day=day,
+                    relative_path=relative_path,
+                    filename=path.name,
+                    started_at=started_at,
+                    size_bytes=path.stat().st_size,
+                    modified_at=modified_at,
+                )
+            )
+        items.sort(key=lambda item: item.relative_path, reverse=True)
+        grouped: dict[str, list[RecordingItem]] = {}
+        for item in items:
+            grouped.setdefault(item.day, []).append(item)
+        ordered_days = sorted((day for day in grouped if day != "未归档"), reverse=True)
+        if "未归档" in grouped:
+            ordered_days.append("未归档")
+        return [
+            {
+                "day": day,
+                "items": [
+                    {
+                        "relative_path": item.relative_path,
+                        "filename": item.filename,
+                        "started_at": item.started_at,
+                        "size_bytes": item.size_bytes,
+                        "modified_at": item.modified_at,
+                    }
+                    for item in grouped[day]
+                ],
+            }
+            for day in ordered_days
+        ]
+
+    def resolve_recording_path(self, relative_path: str) -> Path:
+        root = self._local_recording_output_dir.resolve()
+        candidate = (root / relative_path).resolve()
+        if root not in candidate.parents and candidate != root:
+            raise ValueError("recording path escapes output dir")
+        if not candidate.is_file():
+            raise FileNotFoundError(relative_path)
+        if candidate.suffix.lower() != ".mp4" or not candidate.name.startswith("monitor_") or ".video." in candidate.name:
+            raise ValueError("unsupported recording file")
+        return candidate
+
+    @staticmethod
+    def _recording_started_at(path: Path) -> str:
+        stem = path.stem
+        if not stem.startswith("monitor_"):
+            return ""
+        try:
+            dt = datetime.strptime(stem[len("monitor_"):], "%Y%m%d_%H%M%S")
+        except ValueError:
+            return ""
+        return dt.isoformat()
 
     def _cleanup_expired_recordings(self, now: datetime | None = None) -> None:
         if not self._local_recording_output_dir.exists():

@@ -344,3 +344,21 @@ ValueError: Unable to configure formatter 'default'
 2026-04-11 16:44:57,884 INFO Waiting for application startup.
 2026-04-11 16:44:59,647 INFO Application startup complete.
 2026-04-11 16:44:59,648 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-11 16:52:22,515 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-11 16:52:22,671 INFO Server starting on 0.0.0.0:8000
+2026-04-11 16:52:38,072 INFO Started server process [35816]
+2026-04-11 16:52:38,072 INFO Waiting for application startup.
+2026-04-11 16:52:40,903 INFO Application startup complete.
+2026-04-11 16:52:40,904 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 01:49:58,883 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 01:49:59,120 INFO Server starting on 0.0.0.0:8000
+2026-04-12 01:50:09,488 INFO Started server process [28232]
+2026-04-12 01:50:09,488 INFO Waiting for application startup.
+2026-04-12 01:50:10,204 INFO Application startup complete.
+2026-04-12 01:50:10,205 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 01:55:18,942 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 01:55:19,115 INFO Server starting on 0.0.0.0:8000
+2026-04-12 01:55:26,207 INFO Started server process [34872]
+2026-04-12 01:55:26,208 INFO Waiting for application startup.
+2026-04-12 01:55:27,032 INFO Application startup complete.
+2026-04-12 01:55:27,032 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)

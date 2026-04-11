@@ -25,8 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.rounded.CellTower
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Sensors
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -71,6 +73,7 @@ import com.monitor.intelligentflow.data.MonitorApiService
 import com.monitor.intelligentflow.ui.screens.AppUiState
 import com.monitor.intelligentflow.ui.screens.HistoryScreen
 import com.monitor.intelligentflow.ui.screens.MonitorScreen
+import com.monitor.intelligentflow.ui.screens.RecordingsScreen
 import com.monitor.intelligentflow.ui.screens.SettingsScreen
 import com.monitor.intelligentflow.ui.theme.IntelligentFlowMonitorTheme
 import kotlinx.coroutines.Dispatchers
@@ -213,6 +216,7 @@ private enum class AppTab(
 ) {
     Monitor("监控", Icons.Rounded.Sensors, Icons.Rounded.CellTower),
     History("记录", Icons.Outlined.History, Icons.Rounded.History),
+    Recordings("录像", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
     Settings("设置", Icons.Outlined.Settings, Icons.Rounded.Settings)
 }
 
@@ -283,6 +287,10 @@ private fun MonitorApp(vm: MainViewModel) {
                     onFullscreenChange = { isFullscreen = it }
                 )
                 AppTab.History -> HistoryScreen(
+                    api = api,
+                    modifier = Modifier.padding(innerPadding).padding(bottom = 80.dp)
+                )
+                AppTab.Recordings -> RecordingsScreen(
                     api = api,
                     modifier = Modifier.padding(innerPadding).padding(bottom = 80.dp)
                 )

@@ -4,7 +4,7 @@ import asyncio
 import queue
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
@@ -139,6 +139,22 @@ def capture_info() -> dict:
     return services.pipeline.get_capture_info()
 
 
+@router.get("/recordings")
+def recordings() -> list[dict]:
+    return services.pipeline.list_recordings()
+
+
+@router.get("/recordings/file")
+def recording_file(path: str) -> FileResponse:
+    try:
+        recording_path = services.pipeline.resolve_recording_path(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="recording not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(recording_path, media_type="video/mp4", filename=recording_path.name)
+
+
 @router.get("/audio/info")
 def audio_info() -> dict:
     return {
@@ -206,6 +222,10 @@ def create_fastapi_app() -> FastAPI:
     @app.get("/history", response_class=HTMLResponse)
     def history(request: Request) -> HTMLResponse:
         return templates.TemplateResponse("history.html", {"request": request})
+
+    @app.get("/recordings", response_class=HTMLResponse)
+    def recordings_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse("recordings.html", {"request": request})
 
     @app.get("/stream")
     async def stream(request: Request) -> StreamingResponse:

@@ -62,3 +62,16 @@ data class Report(
     val peakHour: Int?,
     val hourlyDistribution: Map<Int, Int>
 )
+
+data class RecordingFile(
+    val relativePath: String,
+    val filename: String,
+    val startedAt: String,
+    val sizeBytes: Long,
+    val modifiedAt: String
+)
+
+data class RecordingGroup(
+    val day: String,
+    val items: List<RecordingFile>
+)
