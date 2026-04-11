@@ -600,7 +600,7 @@ class VideoAnalyticsPipeline:
         self._cleanup_expired_recordings(now=segment_start)
         segment_dir = self._segment_directory(segment_start)
         segment_dir.mkdir(parents=True, exist_ok=True)
-        stem = f"monitor_{segment_start:%Y%m%d_%H%M%S}"
+        stem = self._segment_basename(segment_start)
         fps = float(max(1, settings.target_fps))
         writer, path = self._create_video_writer(
             stem=f"{stem}.video",
@@ -791,13 +791,17 @@ class VideoAnalyticsPipeline:
         self._audio_subscriber_queue = None
 
     def _segment_output_path(self, segment_start: datetime) -> Path:
-        return self._segment_directory(segment_start) / f"monitor_{segment_start:%Y%m%d_%H%M%S}.mp4"
+        return self._segment_directory(segment_start) / f"{self._segment_basename(segment_start)}.mp4"
 
     def _segment_audio_temp_path(self, segment_start: datetime) -> Path:
-        return self._segment_directory(segment_start) / f"monitor_{segment_start:%Y%m%d_%H%M%S}.audio.wav"
+        return self._segment_directory(segment_start) / f"{self._segment_basename(segment_start)}.audio.wav"
 
     def _segment_directory(self, segment_start: datetime) -> Path:
         return self._local_recording_output_dir / segment_start.strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _segment_basename(segment_start: datetime) -> str:
+        return segment_start.strftime("%Y-%m-%d_%H-%M-%S")
 
     @classmethod
     def _prepare_recording_frame(cls, frame: np.ndarray) -> np.ndarray:
@@ -822,14 +826,16 @@ class VideoAnalyticsPipeline:
         if not root.exists():
             return []
         items: list[RecordingItem] = []
-        for path in root.rglob("monitor_*.mp4"):
+        for path in root.rglob("*.mp4"):
             if not path.is_file():
                 continue
             if ".video." in path.name:
                 continue
+            started_at = self._recording_started_at(path)
+            if not started_at:
+                continue
             day = path.parent.name if path.parent != root else "未归档"
             relative_path = path.relative_to(root).as_posix()
-            started_at = self._recording_started_at(path)
             modified_at = datetime.fromtimestamp(path.stat().st_mtime).isoformat()
             items.append(
                 RecordingItem(
@@ -872,20 +878,24 @@ class VideoAnalyticsPipeline:
             raise ValueError("recording path escapes output dir")
         if not candidate.is_file():
             raise FileNotFoundError(relative_path)
-        if candidate.suffix.lower() != ".mp4" or not candidate.name.startswith("monitor_") or ".video." in candidate.name:
+        if (
+            candidate.suffix.lower() != ".mp4"
+            or ".video." in candidate.name
+            or not self._recording_started_at(candidate)
+        ):
             raise ValueError("unsupported recording file")
         return candidate
 
     @staticmethod
     def _recording_started_at(path: Path) -> str:
         stem = path.stem
-        if not stem.startswith("monitor_"):
-            return ""
-        try:
-            dt = datetime.strptime(stem[len("monitor_"):], "%Y%m%d_%H%M%S")
-        except ValueError:
-            return ""
-        return dt.isoformat()
+        raw = stem[len("monitor_"):] if stem.startswith("monitor_") else stem
+        for fmt in ("%Y-%m-%d_%H-%M-%S", "%Y%m%d_%H%M%S"):
+            try:
+                return datetime.strptime(raw, fmt).isoformat()
+            except ValueError:
+                continue
+        return ""
 
     def _cleanup_expired_recordings(self, now: datetime | None = None) -> None:
         if not self._local_recording_output_dir.exists():
@@ -896,13 +906,15 @@ class VideoAnalyticsPipeline:
             (self._local_recording_retention_days * 24 * 60) // max(1, self._local_recording_segment_minutes),
         )
         groups: dict[str, list[Path]] = {}
-        for path in self._local_recording_output_dir.rglob("monitor_*"):
+        for path in self._local_recording_output_dir.rglob("*"):
             if not path.is_file():
                 continue
             name = path.name
             if ".audio." in name or ".video." in name:
                 continue
             if path.suffix.lower() not in {".mp4", ".wav"}:
+                continue
+            if not self._recording_started_at(path):
                 continue
             key = str(path.with_suffix(""))
             groups.setdefault(key, []).append(path)

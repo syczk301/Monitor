@@ -172,9 +172,9 @@ def test_cleanup_expired_recordings_keeps_recent_segment_window(monkeypatch, tmp
     day2 = tmp_path / "2024-01-02"
     day1.mkdir()
     day2.mkdir()
-    first_file = day1 / "monitor_20240101_000000.mp4"
-    second_file = day1 / "monitor_20240101_120000.mp4"
-    third_file = day2 / "monitor_20240102_000000.mp4"
+    first_file = day1 / "2024-01-01_00-00-00.mp4"
+    second_file = day1 / "2024-01-01_12-00-00.mp4"
+    third_file = day2 / "2024-01-02_00-00-00.mp4"
     first_file.write_bytes(b"first")
     second_file.write_bytes(b"second")
     third_file.write_bytes(b"third")
@@ -200,7 +200,7 @@ def test_segment_output_path_uses_daily_directory(monkeypatch) -> None:
     segment_start = datetime(2024, 1, 2, 13, 0, 0)
 
     assert pipeline._segment_output_path(segment_start) == pipeline_module.Path(
-        r"D:\download\Monitor\2024-01-02\monitor_20240102_130000.mp4"
+        r"D:\download\Monitor\2024-01-02\2024-01-02_13-00-00.mp4"
     )
 
 
@@ -216,16 +216,17 @@ def test_list_recordings_groups_daily_files(monkeypatch, tmp_path) -> None:
     pipeline._local_recording_output_dir = tmp_path
     day_dir = tmp_path / "2024-01-02"
     day_dir.mkdir()
-    (day_dir / "monitor_20240102_130000.mp4").write_bytes(b"a")
+    (day_dir / "2024-01-02_13-00-00.mp4").write_bytes(b"a")
     (tmp_path / "monitor_20240101_120000.mp4").write_bytes(b"b")
-    (day_dir / "monitor_20240102_130000.video.mp4").write_bytes(b"ignore")
+    (day_dir / "2024-01-02_13-00-00.video.mp4").write_bytes(b"ignore")
 
     groups = pipeline.list_recordings()
 
     assert groups[0]["day"] == "2024-01-02"
-    assert groups[0]["items"][0]["relative_path"] == "2024-01-02/monitor_20240102_130000.mp4"
+    assert groups[0]["items"][0]["relative_path"] == "2024-01-02/2024-01-02_13-00-00.mp4"
     assert groups[1]["day"] == "未归档"
     assert groups[1]["items"][0]["relative_path"] == "monitor_20240101_120000.mp4"
+    assert groups[1]["items"][0]["started_at"] == "2024-01-01T12:00:00"
 
 
 def test_resolve_recording_path_rejects_escape(monkeypatch, tmp_path) -> None:
@@ -272,3 +273,16 @@ def test_prepare_recording_frame_keeps_smaller_input(monkeypatch) -> None:
     resized = pipeline_module.VideoAnalyticsPipeline._prepare_recording_frame(frame)
 
     assert resized.shape[:2] == (720, 1280)
+
+
+def test_segment_basename_uses_readable_format(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    assert (
+        pipeline_module.VideoAnalyticsPipeline._segment_basename(datetime(2024, 1, 2, 13, 5, 9))
+        == "2024-01-02_13-05-09"
+    )
