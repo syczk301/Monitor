@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import queue
+import shutil
+import subprocess
 import threading
 import time
+import wave
 from collections.abc import Generator
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -68,10 +73,12 @@ class VideoAnalyticsPipeline:
         repository: PersonEventRepository,
         identity_store: object | None = None,
         stream_source: str | None = None,
+        audio_streamer: object | None = None,
     ) -> None:
         self.stream_source = stream_source if stream_source is not None else settings.stream_source
         self.repository = repository
         self.identity_store = identity_store if identity_store is not None else repository
+        self.audio_streamer = audio_streamer
         self.detector = PersonDetector()
         self.tracker = MultiObjectTracker()
         self.face_engine = PersonEmbeddingEngine()
@@ -83,11 +90,16 @@ class VideoAnalyticsPipeline:
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
         self._record_thread = threading.Thread(target=self._record_loop, daemon=True)
+        self._video_record_thread = threading.Thread(target=self._video_record_loop, daemon=True)
+        self._audio_record_thread = threading.Thread(target=self._audio_record_loop, daemon=True)
+        self._mux_thread = threading.Thread(target=self._mux_loop, daemon=True)
         self._latest_frame: bytes = b""
         self._has_inference_frame: bool = False
         self._presence_by_track_id: dict[int, PresenceState] = {}
         self._pending_by_track_id: dict[int, PendingPresenceState] = {}
         self._recently_closed_by_person_id: dict[str, RecentlyClosedVisit] = {}
+        self._video_queue: queue.Queue[FramePacket] = queue.Queue(maxsize=2)
+        self._mux_queue: queue.Queue[tuple[Path, Path, Path | None]] = queue.Queue(maxsize=8)
         self._leave_timeout_ms = 1500
         self._visit_create_min_seen_frames = max(1, settings.visit_create_min_seen_frames)
         self._visit_create_min_duration_ms = max(0, settings.visit_create_min_duration_ms)
@@ -113,8 +125,26 @@ class VideoAnalyticsPipeline:
         self._client_lock = threading.Lock()
         self._idle_timer: threading.Timer | None = None
         self._idle_timeout_seconds = 15
+        self._local_recording_enabled = settings.local_recording_enabled
+        self._local_recording_output_dir = Path(settings.local_recording_output_dir)
+        self._local_recording_retention_days = max(1, settings.local_recording_retention_days)
+        self._local_recording_segment_minutes = max(1, settings.local_recording_segment_minutes)
+        self._local_recording_status = "waiting" if self._local_recording_enabled else "disabled"
+        self._local_recording_current_file = ""
+        self._video_writer: cv2.VideoWriter | None = None
+        self._video_writer_segment_start: datetime | None = None
+        self._video_writer_path: Path | None = None
+        self._video_temp_path: Path | None = None
+        self._audio_wave_file: wave.Wave_write | None = None
+        self._audio_temp_path: Path | None = None
+        self._audio_subscriber_id: int | None = None
+        self._audio_subscriber_queue: queue.Queue[bytes] | None = None
+        self._ffmpeg_executable: str | None = None
+        self._recording_lock = threading.Lock()
 
     def start(self) -> None:
+        if self.is_running():
+            return
         self._publish_placeholder_frame("正在启动视频服务…")
         self._has_inference_frame = False
         self._stop_event.clear()
@@ -129,12 +159,32 @@ class VideoAnalyticsPipeline:
         if not self._record_thread.is_alive():
             self._record_thread = threading.Thread(target=self._record_loop, daemon=True)
             self._record_thread.start()
+        if not self._video_record_thread.is_alive():
+            self._video_record_thread = threading.Thread(target=self._video_record_loop, daemon=True)
+            self._video_record_thread.start()
+        if not self._audio_record_thread.is_alive():
+            self._audio_record_thread = threading.Thread(target=self._audio_record_loop, daemon=True)
+            self._audio_record_thread.start()
+        if not self._mux_thread.is_alive():
+            self._mux_thread = threading.Thread(target=self._mux_loop, daemon=True)
+            self._mux_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
-        for thread in (self._capture_thread, self._inference_thread, self._record_thread):
+        self._unsubscribe_audio()
+        for thread in (
+            self._capture_thread,
+            self._inference_thread,
+            self._record_thread,
+            self._video_record_thread,
+            self._audio_record_thread,
+            self._mux_thread,
+        ):
             if thread.is_alive():
                 thread.join(timeout=2)
+        with self._recording_lock:
+            self._close_audio_writer(finalize=True)
+            self._close_video_writer()
         self._persist_identity_templates(force=True)
 
     def acquire(self) -> None:
@@ -149,14 +199,14 @@ class VideoAnalyticsPipeline:
     def release(self) -> None:
         with self._client_lock:
             self._client_count = max(0, self._client_count - 1)
-            if self._client_count == 0:
+            if self._client_count == 0 and not self._should_keep_running_without_clients():
                 self._idle_timer = threading.Timer(self._idle_timeout_seconds, self._idle_shutdown)
                 self._idle_timer.daemon = True
                 self._idle_timer.start()
 
     def _idle_shutdown(self) -> None:
         with self._client_lock:
-            if self._client_count == 0:
+            if self._client_count == 0 and not self._should_keep_running_without_clients():
                 self.stop()
                 self._publish_placeholder_frame("等待客户端连接...")
 
@@ -178,11 +228,33 @@ class VideoAnalyticsPipeline:
         settings.camera_width = width
         settings.camera_height = height
         settings.target_fps = fps
-        was_running = not self._stop_event.is_set()
+        was_running = self.is_running()
         if was_running:
             self.stop()
             self._publish_placeholder_frame("正在切换分辨率...")
             self.start()
+        return self.get_capture_info()
+
+    def set_local_recording_enabled(self, enabled: bool) -> dict:
+        self._local_recording_enabled = enabled
+        settings.local_recording_enabled = enabled
+        self._local_recording_status = "waiting" if enabled else "disabled"
+        with self._client_lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            should_stop = not enabled and self._client_count == 0 and not settings.pipeline_run_without_clients
+        if enabled:
+            self.start()
+        else:
+            with self._recording_lock:
+                self._close_audio_writer(finalize=True)
+                self._close_video_writer()
+            self._unsubscribe_audio()
+            self._drain_queue(self._video_queue)
+            if should_stop:
+                self.stop()
+                self._publish_placeholder_frame("等待客户端连接...")
         return self.get_capture_info()
 
     def get_capture_info(self) -> dict:
@@ -195,7 +267,46 @@ class VideoAnalyticsPipeline:
             "target_fps": settings.target_fps,
             "capture_status": self.stats.capture_status,
             "capture_backend": self.stats.capture_backend,
+            "local_recording_enabled": self._local_recording_enabled,
+            "local_recording_status": self._local_recording_status,
+            "local_recording_output_dir": str(self._local_recording_output_dir),
+            "local_recording_retention_days": self._local_recording_retention_days,
+            "local_recording_segment_minutes": self._local_recording_segment_minutes,
+            "local_recording_current_file": self._local_recording_current_file,
         }
+
+    def is_running(self) -> bool:
+        return (
+            not self._stop_event.is_set()
+            and any(
+                thread.is_alive()
+                for thread in (
+                    self._capture_thread,
+                    self._inference_thread,
+                    self._record_thread,
+                )
+            )
+        )
+
+    def should_run_in_background(self) -> bool:
+        return self._should_keep_running_without_clients()
+
+    def _should_keep_running_without_clients(self) -> bool:
+        return settings.pipeline_run_without_clients or self._local_recording_enabled
+
+    @staticmethod
+    def _drain_queue(q: queue.Queue) -> None:
+        while True:
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                return
+
+    @staticmethod
+    def _segment_start(ts_ms: int, segment_minutes: int) -> datetime:
+        dt = datetime.fromtimestamp(ts_ms / 1000)
+        minute = (dt.minute // segment_minutes) * segment_minutes
+        return dt.replace(minute=minute, second=0, microsecond=0)
 
     def _capture_loop(self) -> None:
         cap: cv2.VideoCapture | None = None
@@ -263,17 +374,8 @@ class VideoAnalyticsPipeline:
                 self.stats.fps = 0.8 * self.stats.fps + 0.2 * (1.0 / dt)
             
             packet = FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=frame)
-            try:
-                self.frame_queue.put_nowait(packet)
-            except queue.Full:
-                try:
-                    self.frame_queue.get_nowait()
-                except queue.Empty:
-                    pass
-                try:
-                    self.frame_queue.put_nowait(packet)
-                except queue.Full:
-                    pass
+            self._put_latest(self.frame_queue, packet)
+            self._put_latest(self._video_queue, FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=rendered))
             frame_id += 1
 
             elapsed = time.monotonic() - loop_start
@@ -404,6 +506,312 @@ class VideoAnalyticsPipeline:
         self.identity_store.save_identity_templates(payload)
         self.reid.mark_persisted(set(payload))
         self._last_template_persist_ts = now
+
+    def _video_record_loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                packet = self._video_queue.get(timeout=0.2)
+            except queue.Empty:
+                if not self._local_recording_enabled:
+                    with self._recording_lock:
+                        self._close_audio_writer(finalize=True)
+                        self._close_video_writer()
+                continue
+            if not self._local_recording_enabled:
+                with self._recording_lock:
+                    self._close_audio_writer(finalize=True)
+                    self._close_video_writer()
+                continue
+            try:
+                with self._recording_lock:
+                    writer = self._ensure_video_writer(packet)
+                    if writer is None:
+                        continue
+                    writer.write(packet.frame)
+                self._local_recording_status = "recording"
+            except Exception as exc:
+                self._local_recording_status = f"error: {exc!s}"[:120]
+                with self._recording_lock:
+                    self._close_audio_writer(finalize=True)
+                    self._close_video_writer()
+                time.sleep(0.2)
+        with self._recording_lock:
+            self._close_audio_writer(finalize=True)
+            self._close_video_writer()
+
+    def _audio_record_loop(self) -> None:
+        while not self._stop_event.is_set():
+            if not self._local_recording_enabled:
+                self._unsubscribe_audio()
+                time.sleep(0.2)
+                continue
+            if not self._ensure_audio_subscription():
+                time.sleep(1.0)
+                continue
+            audio_queue = self._audio_subscriber_queue
+            if audio_queue is None:
+                time.sleep(0.2)
+                continue
+            try:
+                chunk = audio_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            with self._recording_lock:
+                if self._audio_wave_file is not None:
+                    self._audio_wave_file.writeframes(chunk)
+        self._unsubscribe_audio()
+
+    def _mux_loop(self) -> None:
+        while not self._stop_event.is_set() or not self._mux_queue.empty():
+            try:
+                final_path, video_temp_path, audio_temp_path = self._mux_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            self._finalize_segment(final_path, video_temp_path, audio_temp_path)
+
+    def _ensure_video_writer(self, packet: FramePacket) -> cv2.VideoWriter | None:
+        segment_start = self._segment_start(packet.ts_ms, self._local_recording_segment_minutes)
+        frame_height, frame_width = packet.frame.shape[:2]
+        if (
+            self._video_writer is not None
+            and self._video_writer_segment_start == segment_start
+            and self._video_temp_path is not None
+        ):
+            return self._video_writer
+        self._close_audio_writer(finalize=True)
+        self._close_video_writer()
+        self._cleanup_expired_recordings(now=segment_start)
+        segment_dir = self._segment_directory(segment_start)
+        segment_dir.mkdir(parents=True, exist_ok=True)
+        stem = f"monitor_{segment_start:%Y%m%d_%H%M%S}"
+        fps = float(max(1, settings.target_fps))
+        writer, path = self._create_video_writer(
+            stem=f"{stem}.video",
+            output_dir=segment_dir,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            fps=fps,
+        )
+        if writer is None or path is None:
+            self._local_recording_status = "writer_unavailable"
+            return None
+        self._open_audio_writer(segment_start)
+        self._video_writer = writer
+        self._video_writer_segment_start = segment_start
+        self._video_temp_path = path
+        self._video_writer_path = self._segment_output_path(segment_start)
+        self._local_recording_current_file = str(self._video_writer_path)
+        self._local_recording_status = "recording"
+        return writer
+
+    def _create_video_writer(
+        self,
+        stem: str,
+        output_dir: Path,
+        frame_width: int,
+        frame_height: int,
+        fps: float,
+    ) -> tuple[cv2.VideoWriter | None, Path | None]:
+        fourcc_fn = getattr(cv2, "VideoWriter_fourcc", None)
+        if not callable(fourcc_fn):
+            return None, None
+        codecs = (
+            ("mp4v", ".mp4"),
+            ("avc1", ".mp4"),
+        )
+        for codec, suffix in codecs:
+            path = output_dir / f"{stem}{suffix}"
+            writer = cv2.VideoWriter(
+                str(path),
+                fourcc_fn(*codec),
+                fps,
+                (frame_width, frame_height),
+            )
+            if writer.isOpened():
+                return writer, path
+            writer.release()
+            if path.exists():
+                path.unlink(missing_ok=True)
+        return None, None
+
+    def _close_video_writer(self) -> None:
+        if self._video_writer is not None:
+            self._video_writer.release()
+        self._video_writer = None
+        self._video_temp_path = None
+        self._video_writer_segment_start = None
+        self._video_writer_path = None
+        self._local_recording_current_file = ""
+        if self._local_recording_enabled and self.is_running():
+            self._local_recording_status = "waiting"
+        elif not self._local_recording_enabled:
+            self._local_recording_status = "disabled"
+
+    def _open_audio_writer(self, segment_start: datetime) -> None:
+        if self.audio_streamer is None:
+            return
+        audio_path = self._segment_audio_temp_path(segment_start)
+        audio_file = wave.open(str(audio_path), "wb")
+        audio_file.setnchannels(getattr(self.audio_streamer, "channels", settings.audio_channels))
+        audio_file.setsampwidth(2)
+        audio_file.setframerate(getattr(self.audio_streamer, "sample_rate", settings.audio_sample_rate))
+        self._audio_wave_file = audio_file
+        self._audio_temp_path = audio_path
+
+    def _close_audio_writer(self, finalize: bool = False) -> None:
+        audio_wave = self._audio_wave_file
+        audio_temp_path = self._audio_temp_path
+        final_path = self._video_writer_path
+        video_temp_path = self._video_temp_path
+        if audio_wave is not None:
+            audio_wave.close()
+        self._audio_wave_file = None
+        self._audio_temp_path = None
+        if finalize and final_path is not None and video_temp_path is not None and video_temp_path.exists():
+            queued = self._queue_segment_for_finalize(final_path, video_temp_path, audio_temp_path)
+            if not queued:
+                self._finalize_segment(final_path, video_temp_path, audio_temp_path)
+
+    def _queue_segment_for_finalize(self, final_path: Path, video_temp_path: Path, audio_temp_path: Path | None) -> bool:
+        try:
+            self._mux_queue.put_nowait((final_path, video_temp_path, audio_temp_path))
+            return True
+        except queue.Full:
+            return False
+
+    def _finalize_segment(self, final_path: Path, video_temp_path: Path, audio_temp_path: Path | None) -> None:
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        if final_path.exists():
+            final_path.unlink(missing_ok=True)
+        if audio_temp_path is None or not audio_temp_path.exists() or audio_temp_path.stat().st_size <= 44:
+            shutil.move(str(video_temp_path), str(final_path))
+            if audio_temp_path is not None and audio_temp_path.exists():
+                audio_temp_path.unlink(missing_ok=True)
+            return
+        ffmpeg_executable = self._get_ffmpeg_executable()
+        if ffmpeg_executable is None:
+            shutil.move(str(video_temp_path), str(final_path))
+            audio_fallback_path = final_path.with_suffix(".wav")
+            if audio_fallback_path.exists():
+                audio_fallback_path.unlink(missing_ok=True)
+            shutil.move(str(audio_temp_path), str(audio_fallback_path))
+            self._local_recording_status = "ffmpeg_unavailable"
+            return
+        completed_process = subprocess.run(
+            [
+                ffmpeg_executable,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(video_temp_path),
+                "-i",
+                str(audio_temp_path),
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(final_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed_process.returncode == 0:
+            video_temp_path.unlink(missing_ok=True)
+            audio_temp_path.unlink(missing_ok=True)
+            return
+        shutil.move(str(video_temp_path), str(final_path))
+        audio_fallback_path = final_path.with_suffix(".wav")
+        if audio_fallback_path.exists():
+            audio_fallback_path.unlink(missing_ok=True)
+        shutil.move(str(audio_temp_path), str(audio_fallback_path))
+        error_text = completed_process.stderr.strip() or "unknown"
+        self._local_recording_status = f"mux_error: {error_text}"[:120]
+
+    def _get_ffmpeg_executable(self) -> str | None:
+        if self._ffmpeg_executable:
+            return self._ffmpeg_executable
+        binary = shutil.which("ffmpeg")
+        if binary:
+            self._ffmpeg_executable = binary
+            return binary
+        try:
+            import imageio_ffmpeg
+
+            self._ffmpeg_executable = imageio_ffmpeg.get_ffmpeg_exe()
+            return self._ffmpeg_executable
+        except Exception:
+            return None
+
+    def _ensure_audio_subscription(self) -> bool:
+        if self.audio_streamer is None:
+            self._local_recording_status = "audio_unavailable"
+            return False
+        if self._audio_subscriber_queue is not None:
+            return True
+        try:
+            subscriber_id, subscriber_queue = self.audio_streamer.subscribe()
+        except Exception as exc:
+            self._local_recording_status = f"audio_error: {exc!s}"[:120]
+            return False
+        self._audio_subscriber_id = subscriber_id
+        self._audio_subscriber_queue = subscriber_queue
+        return True
+
+    def _unsubscribe_audio(self) -> None:
+        if self.audio_streamer is None or self._audio_subscriber_id is None:
+            self._audio_subscriber_id = None
+            self._audio_subscriber_queue = None
+            return
+        try:
+            self.audio_streamer.unsubscribe(self._audio_subscriber_id)
+        except Exception:
+            pass
+        self._audio_subscriber_id = None
+        self._audio_subscriber_queue = None
+
+    def _segment_output_path(self, segment_start: datetime) -> Path:
+        return self._segment_directory(segment_start) / f"monitor_{segment_start:%Y%m%d_%H%M%S}.mp4"
+
+    def _segment_audio_temp_path(self, segment_start: datetime) -> Path:
+        return self._segment_directory(segment_start) / f"monitor_{segment_start:%Y%m%d_%H%M%S}.audio.wav"
+
+    def _segment_directory(self, segment_start: datetime) -> Path:
+        return self._local_recording_output_dir / segment_start.strftime("%Y-%m-%d")
+
+    def _cleanup_expired_recordings(self, now: datetime | None = None) -> None:
+        if not self._local_recording_output_dir.exists():
+            return
+        del now
+        max_segments = max(
+            1,
+            (self._local_recording_retention_days * 24 * 60) // max(1, self._local_recording_segment_minutes),
+        )
+        groups: dict[str, list[Path]] = {}
+        for path in self._local_recording_output_dir.rglob("monitor_*"):
+            if not path.is_file():
+                continue
+            name = path.name
+            if ".audio." in name or ".video." in name:
+                continue
+            if path.suffix.lower() not in {".mp4", ".wav"}:
+                continue
+            key = str(path.with_suffix(""))
+            groups.setdefault(key, []).append(path)
+        if len(groups) <= max_segments:
+            return
+        for key in sorted(groups)[: len(groups) - max_segments]:
+            for path in groups[key]:
+                path.unlink(missing_ok=True)
+        for directory in sorted(self._local_recording_output_dir.rglob("*"), reverse=True):
+            if directory.is_dir():
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
 
     def _record_loop(self) -> None:
         while not self._stop_event.is_set():

@@ -60,6 +60,7 @@ class AppServices:
         self.pipeline = VideoAnalyticsPipeline(
             repository=self.repository,
             identity_store=self.identity_store,
+            audio_streamer=self.audio,
         )
 
 

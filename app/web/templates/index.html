@@ -480,6 +480,7 @@
           <span class="monitor-toolbar-hint">滚轮缩放，拖动平移；"区域圈选"用于高级微调</span>
           <div class="monitor-toolbar-buttons">
             <button id="sound-toggle" type="button" class="tool-btn">开启声音</button>
+            <button id="record-toggle" type="button" class="tool-btn">开启录像</button>
             <button id="roi-toggle" type="button" class="tool-btn">高级圈选</button>
           </div>
         </div>
@@ -492,12 +493,14 @@
         </div>
         <div class="app-float-bar">
           <button id="app-sound-toggle" type="button" class="app-float-btn">开启声音</button>
+          <button id="app-record-toggle" type="button" class="app-float-btn">开启录像</button>
           <button id="app-roi-toggle" type="button" class="app-float-btn" onclick="document.getElementById('roi-toggle').click()">区域圈选</button>
           <button class="app-float-btn" onclick="location.reload()">刷新画面</button>
         </div>
       </div>
       <p id="stream-error" style="color: #ef4444; margin-top: 12px; font-size: 0.9em;"></p>
       <p id="audio-status" style="color: var(--text-muted); margin-top: 8px; font-size: 0.85em;">声音默认关闭，点击“开启声音”后播放后端机器默认麦克风。</p>
+      <p id="record-status" style="color: var(--text-muted); margin-top: 8px; font-size: 0.85em;">本地录像默认保存到 D:\download\Monitor，按天建目录、按小时分片，最近一月循环覆盖。</p>
       <div class="roi-section">
         <h2 style="margin:18px 0 12px;">ROI 检测参数</h2>
         <div id="roi-configs" class="roi-configs"></div>
@@ -563,7 +566,10 @@
     const appRoiToggle = document.getElementById("app-roi-toggle");
     const soundToggle = document.getElementById("sound-toggle");
     const appSoundToggle = document.getElementById("app-sound-toggle");
+    const recordToggle = document.getElementById("record-toggle");
+    const appRecordToggle = document.getElementById("app-record-toggle");
     const audioStatus = document.getElementById("audio-status");
+    const recordStatus = document.getElementById("record-status");
 
     const streamImage = document.getElementById("stream");
     const streamError = document.getElementById("stream-error");
@@ -610,6 +616,20 @@
         appSoundToggle.textContent = label;
         appSoundToggle.classList.toggle("active", audioEnabled);
         appSoundToggle.disabled = audioConnecting;
+      }
+    }
+
+    function updateRecordButtons(enabled, busy = false) {
+      const label = enabled ? "关闭录像" : "开启录像";
+      if (recordToggle) {
+        recordToggle.textContent = label;
+        recordToggle.classList.toggle("active", enabled);
+        recordToggle.disabled = busy;
+      }
+      if (appRecordToggle) {
+        appRecordToggle.textContent = label;
+        appRecordToggle.classList.toggle("active", enabled);
+        appRecordToggle.disabled = busy;
       }
     }
 
@@ -994,6 +1014,20 @@
     const camApply = document.getElementById("cam-apply");
     const camMsg = document.getElementById("cam-msg");
 
+    function updateRecordingInfo(d) {
+      const enabled = !!d.local_recording_enabled;
+      updateRecordButtons(enabled, false);
+      if (!recordStatus) return;
+      if (!d.local_recording_enabled) {
+        recordStatus.textContent = "本地录像已关闭。";
+        recordStatus.style.color = "var(--text-muted)";
+        return;
+      }
+      const currentFile = d.local_recording_current_file || "等待首个录像分片生成";
+      recordStatus.textContent = `本地录像: ${d.local_recording_status || "-"} | 当前文件: ${currentFile}`;
+      recordStatus.style.color = d.local_recording_status === "recording" ? "var(--accent)" : "var(--text-muted)";
+    }
+
     async function loadCamSettings() {
       try {
         const res = await fetch("/api/capture_info");
@@ -1005,6 +1039,7 @@
         for (const opt of camFps.options) {
           if (parseInt(opt.value) === (d.target_fps || 30)) { opt.selected = true; break; }
         }
+        updateRecordingInfo(d);
       } catch (e) {}
     }
 
@@ -1031,8 +1066,33 @@
       camApply.textContent = "应用";
     });
 
+    async function toggleLocalRecording() {
+      const enabled = !(recordToggle && recordToggle.classList.contains("active"));
+      updateRecordButtons(enabled, true);
+      try {
+        const res = await fetch("/api/local_recording", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled })
+        });
+        const d = await res.json();
+        updateRecordingInfo(d);
+      } catch (e) {
+        updateRecordButtons(!enabled, false);
+        if (recordStatus) {
+          recordStatus.textContent = "录像开关切换失败";
+          recordStatus.style.color = "#ef4444";
+        }
+      }
+    }
+
+    if (recordToggle) recordToggle.addEventListener("click", toggleLocalRecording);
+    if (appRecordToggle) appRecordToggle.addEventListener("click", toggleLocalRecording);
+
     loadCamSettings();
+    setInterval(loadCamSettings, 5000);
     updateSoundButtons();
+    updateRecordButtons(false);
   </script>
 </body>
 

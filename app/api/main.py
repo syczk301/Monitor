@@ -156,9 +156,18 @@ class CameraSettingsPayload(BaseModel):
     fps: int = Field(ge=5, le=60)
 
 
+class LocalRecordingPayload(BaseModel):
+    enabled: bool
+
+
 @router.post("/camera_settings")
 def update_camera_settings(payload: CameraSettingsPayload) -> dict:
     return services.pipeline.apply_camera_settings(payload.width, payload.height, payload.fps)
+
+
+@router.post("/local_recording")
+def update_local_recording(payload: LocalRecordingPayload) -> dict:
+    return services.pipeline.set_local_recording_enabled(payload.enabled)
 
 
 @router.get("/reports/daily")
@@ -177,7 +186,10 @@ def create_fastapi_app() -> FastAPI:
 
     @app.on_event("startup")
     def startup() -> None:
-        services.pipeline._publish_placeholder_frame("等待客户端连接...")
+        if services.pipeline.should_run_in_background():
+            services.pipeline.start()
+        else:
+            services.pipeline._publish_placeholder_frame("等待客户端连接...")
 
     @app.on_event("shutdown")
     def shutdown() -> None:

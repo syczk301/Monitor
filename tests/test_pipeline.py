@@ -134,3 +134,70 @@ def test_record_loop_merges_short_reconnect_and_drops_short_visit(monkeypatch) -
     assert repo.deleted_visit_ids == [2]
     assert repo.upserted_person_ids == ["person-a", "person-b"]
     assert 1 in repo.closed_visit_ids
+
+
+def test_release_keeps_pipeline_alive_when_local_recording_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    repo = _FakeRepository()
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=repo, identity_store=repo, stream_source="0")
+    pipeline._local_recording_enabled = True
+    pipeline._client_count = 1
+
+    pipeline.release()
+
+    assert pipeline._client_count == 0
+    assert pipeline._idle_timer is None
+
+
+def test_cleanup_expired_recordings_keeps_recent_segment_window(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    repo = _FakeRepository()
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=repo, identity_store=repo, stream_source="0")
+    pipeline._local_recording_output_dir = tmp_path
+    pipeline._local_recording_retention_days = 1
+    pipeline._local_recording_segment_minutes = 720
+
+    day1 = tmp_path / "2024-01-01"
+    day2 = tmp_path / "2024-01-02"
+    day1.mkdir()
+    day2.mkdir()
+    first_file = day1 / "monitor_20240101_000000.mp4"
+    second_file = day1 / "monitor_20240101_120000.mp4"
+    third_file = day2 / "monitor_20240102_000000.mp4"
+    first_file.write_bytes(b"first")
+    second_file.write_bytes(b"second")
+    third_file.write_bytes(b"third")
+
+    pipeline._cleanup_expired_recordings()
+
+    assert not first_file.exists()
+    assert second_file.exists()
+    assert third_file.exists()
+
+
+def test_segment_output_path_uses_daily_directory(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    repo = _FakeRepository()
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=repo, identity_store=repo, stream_source="0")
+    pipeline._local_recording_output_dir = pipeline_module.Path(r"D:\download\Monitor")
+
+    segment_start = datetime(2024, 1, 2, 13, 0, 0)
+
+    assert pipeline._segment_output_path(segment_start) == pipeline_module.Path(
+        r"D:\download\Monitor\2024-01-02\monitor_20240102_130000.mp4"
+    )
