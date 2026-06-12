@@ -380,3 +380,142 @@ ValueError: Unable to configure formatter 'default'
 2026-04-12 02:27:28,820 INFO Waiting for application startup.
 2026-04-12 02:27:29,302 INFO Application startup complete.
 2026-04-12 02:27:29,303 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 14:51:56,112 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 14:51:56,312 INFO Server starting on 0.0.0.0:8000
+2026-04-12 14:52:05,150 INFO Started server process [33156]
+2026-04-12 14:52:05,150 INFO Waiting for application startup.
+2026-04-12 14:52:05,657 INFO Application startup complete.
+2026-04-12 14:52:05,657 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 14:52:09,320 INFO Shutting down
+2026-04-12 14:52:09,422 INFO Waiting for application shutdown.
+2026-04-12 14:52:11,698 INFO Application shutdown complete.
+2026-04-12 14:52:11,698 INFO Finished server process [33156]
+2026-04-12 14:52:11,698 INFO Server stopped
+2026-04-12 14:52:13,488 INFO Server starting on 0.0.0.0:8000
+2026-04-12 14:52:18,074 INFO Started server process [33156]
+2026-04-12 14:52:18,074 INFO Waiting for application startup.
+2026-04-12 14:52:18,617 INFO Application startup complete.
+2026-04-12 14:52:18,618 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 16:39:05,455 INFO Shutting down
+2026-04-12 16:39:05,556 INFO Waiting for application shutdown.
+2026-04-12 16:39:08,357 INFO Application shutdown complete.
+2026-04-12 16:39:08,357 INFO Finished server process [33156]
+2026-04-12 16:39:08,359 INFO Server stopped
+2026-04-12 16:39:21,731 INFO Server starting on 0.0.0.0:8000
+2026-04-12 16:39:24,480 INFO Started server process [33156]
+2026-04-12 16:39:24,480 INFO Waiting for application startup.
+2026-04-12 16:39:24,990 INFO Application startup complete.
+2026-04-12 16:39:24,990 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:00:10,096 INFO Shutting down
+2026-04-12 18:00:10,202 INFO Waiting for application shutdown.
+2026-04-12 18:00:10,202 INFO Application shutdown complete.
+2026-04-12 18:00:10,202 INFO Finished server process [33156]
+2026-04-12 18:00:10,203 INFO Server stopped
+2026-04-12 18:00:15,107 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:00:18,169 INFO Started server process [33156]
+2026-04-12 18:00:18,169 INFO Waiting for application startup.
+2026-04-12 18:00:18,905 INFO Application startup complete.
+2026-04-12 18:00:18,905 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:12:32,490 INFO Shutting down
+2026-04-12 18:12:32,597 INFO Waiting for application shutdown.
+2026-04-12 18:12:32,597 INFO Application shutdown complete.
+2026-04-12 18:12:32,598 INFO Finished server process [33156]
+2026-04-12 18:12:32,598 INFO Server stopped
+2026-04-12 18:12:35,838 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:12:40,304 INFO Started server process [33156]
+2026-04-12 18:12:40,304 INFO Waiting for application startup.
+2026-04-12 18:12:40,823 INFO Application startup complete.
+2026-04-12 18:12:40,823 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:19:10,926 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:19:11,107 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:19:20,051 INFO Started server process [17676]
+2026-04-12 18:19:20,051 INFO Waiting for application startup.
+2026-04-12 18:19:21,442 INFO Application startup complete.
+2026-04-12 18:19:21,443 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:26:56,641 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:26:56,797 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:27:04,103 INFO Started server process [11912]
+2026-04-12 18:27:04,103 INFO Waiting for application startup.
+2026-04-12 18:27:04,889 INFO Application startup complete.
+2026-04-12 18:27:04,889 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:29:41,488 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:29:41,646 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:29:50,180 INFO Started server process [42540]
+2026-04-12 18:29:50,180 INFO Waiting for application startup.
+2026-04-12 18:29:51,043 INFO Application startup complete.
+2026-04-12 18:29:51,044 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:32:32,493 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:32:32,652 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:32:39,285 INFO Started server process [35960]
+2026-04-12 18:32:39,285 INFO Waiting for application startup.
+2026-04-12 18:32:41,158 INFO Application startup complete.
+2026-04-12 18:32:41,159 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:34:23,096 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:34:23,252 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:34:29,796 INFO Started server process [50336]
+2026-04-12 18:34:29,796 INFO Waiting for application startup.
+2026-04-12 18:34:29,803 INFO Application startup complete.
+2026-04-12 18:34:29,804 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:38:10,999 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:38:11,152 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:38:18,649 INFO Started server process [10168]
+2026-04-12 18:38:18,649 INFO Waiting for application startup.
+2026-04-12 18:38:18,656 INFO Application startup complete.
+2026-04-12 18:38:18,657 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:39:43,649 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:39:43,794 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:39:50,409 INFO Started server process [37036]
+2026-04-12 18:39:50,411 INFO Waiting for application startup.
+2026-04-12 18:39:50,417 INFO Application startup complete.
+2026-04-12 18:39:50,418 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:43:15,428 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:43:15,577 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:43:22,107 INFO Started server process [48512]
+2026-04-12 18:43:22,107 INFO Waiting for application startup.
+2026-04-12 18:43:22,113 INFO Application startup complete.
+2026-04-12 18:43:22,114 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:46:48,994 INFO Shutting down
+2026-04-12 18:46:49,101 INFO Waiting for application shutdown.
+2026-04-12 18:46:49,102 INFO Application shutdown complete.
+2026-04-12 18:46:49,102 INFO Finished server process [48512]
+2026-04-12 18:46:49,103 INFO Server stopped
+2026-04-12 18:49:31,961 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:49:32,109 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:49:39,846 INFO Started server process [45408]
+2026-04-12 18:49:39,846 INFO Waiting for application startup.
+2026-04-12 18:49:39,850 INFO Application startup complete.
+2026-04-12 18:49:39,851 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:51:12,924 INFO Shutting down
+2026-04-12 18:51:13,039 INFO Waiting for connections to close. (CTRL+C to force quit)
+2026-04-12 18:52:32,545 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:52:35,174 INFO Started server process [45408]
+2026-04-12 18:52:35,174 INFO Waiting for application startup.
+2026-04-12 18:52:35,647 INFO Application startup complete.
+2026-04-12 18:52:35,648 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-12 18:52:36,226 INFO Waiting for application shutdown.
+2026-04-12 18:52:36,801 INFO Application shutdown complete.
+2026-04-12 18:52:36,801 INFO Finished server process [45408]
+2026-04-12 18:52:36,802 INFO Server stopped
+2026-04-12 18:52:54,497 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-12 18:52:54,651 INFO Server starting on 0.0.0.0:8000
+2026-04-12 18:53:00,819 INFO Started server process [10568]
+2026-04-12 18:53:00,819 INFO Waiting for application startup.
+2026-04-12 18:53:01,335 INFO Application startup complete.
+2026-04-12 18:53:01,335 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-20 17:51:17,817 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-04-20 17:51:18,022 INFO Server starting on 0.0.0.0:8000
+2026-04-20 17:51:26,165 INFO Started server process [10628]
+2026-04-20 17:51:26,165 INFO Waiting for application startup.
+2026-04-20 17:51:26,603 INFO Application startup complete.
+2026-04-20 17:51:26,604 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-20 17:51:59,776 INFO Shutting down
+2026-04-20 17:51:59,877 INFO Waiting for application shutdown.
+2026-04-20 17:52:00,637 INFO Application shutdown complete.
+2026-04-20 17:52:00,637 INFO Finished server process [10628]
+2026-04-20 17:52:00,638 INFO Server stopped
+2026-05-11 18:41:38,930 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-05-11 18:41:39,179 INFO Server starting on 0.0.0.0:8000
+2026-05-11 18:41:48,338 INFO Started server process [40492]
+2026-05-11 18:41:48,338 INFO Waiting for application startup.
+2026-05-11 18:41:48,804 INFO Application startup complete.
+2026-05-11 18:41:48,804 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
