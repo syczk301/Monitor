@@ -200,6 +200,7 @@ class PersonEventRepository:
             stmt = select(IdentityTemplate).where(IdentityTemplate.person_id.in_(person_ids))
             for row in session.scalars(stmt):
                 session.delete(row)
+            session.flush()
             saved = 0
             for person_id, templates in templates_by_person.items():
                 for idx, feature in enumerate(templates):

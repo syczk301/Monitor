@@ -99,7 +99,7 @@ class Settings(BaseModel):
     mjpeg_quality: int = int(os.getenv("MJPEG_QUALITY", "85"))
     target_fps: int = int(os.getenv("TARGET_FPS", "30"))
     pipeline_run_without_clients: bool = _env_flag("PIPELINE_RUN_WITHOUT_CLIENTS", default=False)
-    local_recording_enabled: bool = _env_flag("LOCAL_RECORDING_ENABLED", default=True)
+    local_recording_enabled: bool = _env_flag("LOCAL_RECORDING_ENABLED", default=False)
     local_recording_output_dir: Path = Path(os.getenv("LOCAL_RECORDING_OUTPUT_DIR", r"D:\download\Monitor"))
     local_recording_retention_days: int = int(os.getenv("LOCAL_RECORDING_RETENTION_DAYS", "30"))
     local_recording_segment_minutes: int = int(os.getenv("LOCAL_RECORDING_SEGMENT_MINUTES", "60"))

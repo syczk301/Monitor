@@ -100,6 +100,8 @@ class VideoAnalyticsPipeline:
         self.frame_queue: queue.Queue[FramePacket] = queue.Queue(maxsize=settings.frame_queue_size)
         self.result_queue: queue.Queue[InferencePacket] = queue.Queue(maxsize=settings.result_queue_size)
         self._stop_event = threading.Event()
+        self._capture_restart_event = threading.Event()
+        self._capture_restart_complete_event = threading.Event()
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
         self._record_thread = threading.Thread(target=self._record_loop, daemon=True)
@@ -132,6 +134,7 @@ class VideoAnalyticsPipeline:
         self._display_overlay_version = -1
         self._template_persist_interval_seconds = max(1, settings.reid_persist_interval_seconds)
         self._last_template_persist_ts = 0.0
+        self._template_persist_lock = threading.Lock()
         self._actual_width: int = 0
         self._actual_height: int = 0
         self._client_count = 0
@@ -237,15 +240,19 @@ class VideoAnalyticsPipeline:
             time.sleep(0.03)
 
     def apply_camera_settings(self, width: int, height: int, fps: int) -> dict:
-        """Dynamically change resolution and target FPS, restarts capture."""
+        """Apply camera settings by reopening capture without restarting the pipeline."""
         settings.camera_width = width
         settings.camera_height = height
         settings.target_fps = fps
-        was_running = self.is_running()
-        if was_running:
-            self.stop()
+        if self.is_running():
+            self._actual_width = 0
+            self._actual_height = 0
+            self.stats.capture_status = "switching"
             self._publish_placeholder_frame("正在切换分辨率...")
-            self.start()
+            self._drain_queue(self.frame_queue)
+            self._capture_restart_complete_event.clear()
+            self._capture_restart_event.set()
+            self._capture_restart_complete_event.wait(timeout=5.0)
         return self.get_capture_info()
 
     def set_local_recording_enabled(self, enabled: bool) -> dict:
@@ -326,10 +333,20 @@ class VideoAnalyticsPipeline:
         failed_reads = 0
         corrupted_reads = 0
         frame_id = 0
-        prev_display_ts = time.time()
-        target_interval = 1.0 / max(1, settings.target_fps)
+        awaiting_restart_frame = False
+        display_latency_ms = 0.0
         while not self._stop_event.is_set():
+            if self._capture_restart_event.is_set():
+                if cap is not None:
+                    cap.release()
+                cap = None
+                self._capture_restart_event.clear()
+                awaiting_restart_frame = True
+                failed_reads = 0
+                corrupted_reads = 0
+
             loop_start = time.monotonic()
+            target_interval = 1.0 / max(1, settings.target_fps)
             if cap is None or not cap.isOpened():
                 cap = self._open_capture()
                 if not cap.isOpened():
@@ -370,6 +387,9 @@ class VideoAnalyticsPipeline:
             h, w = frame.shape[:2]
             self._actual_width = w
             self._actual_height = h
+            if awaiting_restart_frame:
+                awaiting_restart_frame = False
+                self._capture_restart_complete_event.set()
             
             ts_ms = int(time.time() * 1000)
             with self._overlay_lock:
@@ -380,11 +400,21 @@ class VideoAnalyticsPipeline:
             if ok_enc:
                 self._latest_frame = bytes(buf)
             
-            now = time.time()
-            dt = now - prev_display_ts
-            prev_display_ts = now
-            if dt > 0:
-                self.stats.fps = 0.8 * self.stats.fps + 0.2 * (1.0 / dt)
+            # The dashboard FPS represents the configured output rate.  Capture
+            # throughput can be lower on slow hardware, but must not make the
+            # selected camera setting appear to have changed by itself.
+            self.stats.fps = float(settings.target_fps)
+
+            # Report the latency of the frame users actually see: capture,
+            # overlay rendering and JPEG encoding.  Inference runs
+            # asynchronously, so its queue age is not display latency and can
+            # grow very large during model warm-up.
+            frame_latency_ms = (time.monotonic() - loop_start) * 1000.0
+            if display_latency_ms <= 0.0:
+                display_latency_ms = frame_latency_ms
+            else:
+                display_latency_ms = 0.8 * display_latency_ms + 0.2 * frame_latency_ms
+            self.stats.avg_latency_ms = display_latency_ms
             
             packet = FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=frame)
             self._put_latest(self.frame_queue, packet)
@@ -404,7 +434,6 @@ class VideoAnalyticsPipeline:
 
     def _inference_loop(self) -> None:
         prev_ts = time.time()
-        latencies: list[float] = []
         frame_counter = 0
         cached_notes: dict = {}
         cached_rois: list[dict] = []
@@ -491,11 +520,6 @@ class VideoAnalyticsPipeline:
                 now = time.time()
                 dt = now - prev_ts
                 prev_ts = now
-                latency = max(0.0, time.time() * 1000 - packet.ts_ms)
-                latencies.append(latency)
-                if len(latencies) > 120:
-                    latencies.pop(0)
-                self.stats.avg_latency_ms = float(np.mean(latencies)) if latencies else 0.0
                 self.stats.tracked_targets = len(tracks)
                 self.stats.gpu_utilization = min(
                     settings.gpu_max_utilization,
@@ -509,20 +533,21 @@ class VideoAnalyticsPipeline:
         self.reid.load_templates(templates)
 
     def _persist_identity_templates(self, force: bool = False) -> None:
-        dirty_person_ids = self.reid.get_dirty_person_ids()
-        if not dirty_person_ids:
-            return
-        now = time.monotonic()
-        if not force and now - self._last_template_persist_ts < self._template_persist_interval_seconds:
-            return
-        payload = self.reid.snapshot_templates(dirty_person_ids)
-        if not payload:
-            self.reid.mark_persisted(dirty_person_ids)
+        with self._template_persist_lock:
+            dirty_person_ids = self.reid.get_dirty_person_ids()
+            if not dirty_person_ids:
+                return
+            now = time.monotonic()
+            if not force and now - self._last_template_persist_ts < self._template_persist_interval_seconds:
+                return
+            payload = self.reid.snapshot_templates(dirty_person_ids)
+            if not payload:
+                self.reid.mark_persisted(dirty_person_ids)
+                self._last_template_persist_ts = now
+                return
+            self.identity_store.save_identity_templates(payload)
+            self.reid.mark_persisted(set(payload))
             self._last_template_persist_ts = now
-            return
-        self.identity_store.save_identity_templates(payload)
-        self.reid.mark_persisted(set(payload))
-        self._last_template_persist_ts = now
 
     def _video_record_loop(self) -> None:
         while not self._stop_event.is_set():

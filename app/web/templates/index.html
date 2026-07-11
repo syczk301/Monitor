@@ -1058,6 +1058,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ width: w, height: h, fps })
         });
+        if (!res.ok) throw new Error(`camera settings request failed: ${res.status}`);
         const d = await res.json();
         camMsg.textContent = `已切换: ${d.actual_width}x${d.actual_height}`;
         camMsg.style.color = "var(--accent)";

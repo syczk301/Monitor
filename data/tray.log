@@ -608,3 +608,13 @@ sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) UNIQUE constraint failed
 2026-07-03 20:02:05,774 ERROR Application shutdown failed. Exiting.
 2026-07-03 20:02:05,774 INFO Finished server process [39976]
 2026-07-03 20:02:05,775 INFO Server stopped
+2026-07-11 21:19:37,969 INFO Server starting on 0.0.0.0:8000
+2026-07-11 21:19:47,820 INFO Started server process [39976]
+2026-07-11 21:19:47,821 INFO Waiting for application startup.
+2026-07-11 21:19:49,996 INFO Application startup complete.
+2026-07-11 21:19:49,998 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-07-11 21:19:54,436 INFO Shutting down
+2026-07-11 21:19:54,539 INFO Waiting for application shutdown.
+2026-07-11 21:19:59,331 INFO Application shutdown complete.
+2026-07-11 21:19:59,331 INFO Finished server process [39976]
+2026-07-11 21:19:59,335 INFO Server stopped

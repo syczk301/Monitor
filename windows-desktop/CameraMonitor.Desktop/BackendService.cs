@@ -11,6 +11,7 @@ internal sealed class BackendService : IDisposable
     public BackendService(AppPaths paths)
     {
         _paths = paths;
+        TryAttachExistingProcess();
     }
 
     public event EventHandler<string>? OutputReceived;
@@ -25,6 +26,12 @@ internal sealed class BackendService : IDisposable
 
         if (IsRunning)
         {
+            return;
+        }
+
+        if (TryAttachExistingProcess())
+        {
+            OutputReceived?.Invoke(this, $"已接管现有 Python 后端，进程 ID：{_process!.Id}。");
             return;
         }
 
@@ -54,6 +61,7 @@ internal sealed class BackendService : IDisposable
             ?? throw new InvalidOperationException("启动 Python 后端进程失败。");
 
         _process = process;
+        File.WriteAllText(_paths.BackendPidFile, process.Id.ToString());
         process.EnableRaisingEvents = true;
         process.OutputDataReceived += OnOutputDataReceived;
         process.ErrorDataReceived += OnOutputDataReceived;
@@ -89,6 +97,57 @@ internal sealed class BackendService : IDisposable
         finally
         {
             _process = null;
+            DeletePidFile();
+        }
+    }
+
+    private bool TryAttachExistingProcess()
+    {
+        if (!File.Exists(_paths.BackendPidFile)
+            || !int.TryParse(File.ReadAllText(_paths.BackendPidFile).Trim(), out var pid))
+        {
+            return false;
+        }
+
+        try
+        {
+            var process = Process.GetProcessById(pid);
+            if (process.HasExited
+                || !process.ProcessName.StartsWith("python", StringComparison.OrdinalIgnoreCase))
+            {
+                DeletePidFile();
+                return false;
+            }
+
+            _process = process;
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) =>
+            {
+                if (_process?.Id == pid)
+                {
+                    _process = null;
+                    DeletePidFile();
+                }
+                OutputReceived?.Invoke(this, $"Python 后端已退出，进程 ID：{pid}。");
+            };
+            return true;
+        }
+        catch
+        {
+            DeletePidFile();
+            return false;
+        }
+    }
+
+    private void DeletePidFile()
+    {
+        try
+        {
+            File.Delete(_paths.BackendPidFile);
+        }
+        catch
+        {
+            // A stale PID file will be revalidated on the next start.
         }
     }
 

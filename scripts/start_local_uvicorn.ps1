@@ -18,8 +18,19 @@ foreach ($proc in $existing) {
 }
 
 Write-Host "Starting uvicorn on http://$HostAddress`:$Port ..."
-Start-Process python -ArgumentList @(
+$logDirectory = Join-Path $repoRoot "data"
+New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+$stdoutLog = Join-Path $logDirectory "uvicorn.out.log"
+$stderrLog = Join-Path $logDirectory "uvicorn.err.log"
+
+$process = Start-Process python -ArgumentList @(
     "-m", "uvicorn", "app.main:app",
     "--host", $HostAddress,
     "--port", "$Port"
-) -WorkingDirectory $repoRoot
+) -WorkingDirectory $repoRoot `
+  -WindowStyle Hidden `
+  -RedirectStandardOutput $stdoutLog `
+  -RedirectStandardError $stderrLog `
+  -PassThru
+
+Set-Content -Path (Join-Path $logDirectory "uvicorn.pid") -Value $process.Id

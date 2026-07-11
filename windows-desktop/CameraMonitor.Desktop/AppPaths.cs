@@ -28,6 +28,8 @@ internal sealed class AppPaths
 
     public string TrayLogFile => Path.Combine(DataDirectory, "tray.log");
 
+    public string BackendPidFile => Path.Combine(DataDirectory, "uvicorn.pid");
+
     public static AppPaths Discover()
     {
         var root = FindRepositoryRoot();

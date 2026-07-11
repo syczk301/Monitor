@@ -16,6 +16,7 @@ internal sealed class MonitorApplicationContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _statusTimer;
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(1) };
     private bool _exiting;
+    private bool _serviceReachable;
 
     public MonitorApplicationContext(string[] args)
     {
@@ -102,28 +103,25 @@ internal sealed class MonitorApplicationContext : ApplicationContext
             return;
         }
 
-        if (!_backend.IsRunning)
-        {
-            UpdateUi("已停止");
-            return;
-        }
-
         try
         {
             var health = await _httpClient.GetFromJsonAsync<HealthResponse>($"{_paths.DashboardUrl}/api/health");
+            _serviceReachable = health is not null;
             UpdateUi(health is null ? "没有健康检查响应" : $"正常，FPS={health.Fps:0.0}，目标={health.TrackedTargets}");
         }
         catch
         {
-            UpdateUi("正在启动或暂不可用");
+            _serviceReachable = false;
+            UpdateUi(_backend.IsRunning ? "正在启动或暂不可用" : "已停止");
         }
     }
 
     private void UpdateUi(string healthText)
     {
-        _form.UpdateStatus(_backend.IsRunning, healthText, _backend.ProcessId);
-        _trayIcon.Text = _backend.IsRunning ? "智能监控 - 运行中" : "智能监控 - 已停止";
-        _startMenuItem.Enabled = !_backend.IsRunning;
+        var running = _backend.IsRunning || _serviceReachable;
+        _form.UpdateStatus(running, healthText, _backend.ProcessId);
+        _trayIcon.Text = running ? "智能监控 - 运行中" : "智能监控 - 已停止";
+        _startMenuItem.Enabled = !running;
         _stopMenuItem.Enabled = _backend.IsRunning;
     }
 
