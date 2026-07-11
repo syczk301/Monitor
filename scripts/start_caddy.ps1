@@ -80,4 +80,14 @@ foreach ($proc in $existing) {
 }
 
 Write-Host "Starting Caddy on http://127.0.0.1:8080 ..."
-Start-Process $caddy -ArgumentList @("run", "--config", (Join-Path $repoRoot "Caddyfile")) -WorkingDirectory $repoRoot
+$logDirectory = Join-Path $repoRoot "data"
+New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+$stdoutLog = Join-Path $logDirectory "caddy.out.log"
+$stderrLog = Join-Path $logDirectory "caddy.err.log"
+
+Start-Process $caddy `
+    -ArgumentList @("run", "--config", (Join-Path $repoRoot "Caddyfile")) `
+    -WorkingDirectory $repoRoot `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $stdoutLog `
+    -RedirectStandardError $stderrLog

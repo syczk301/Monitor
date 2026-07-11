@@ -104,6 +104,12 @@ cp .env.example .env
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+### Windows 原生主程序
+
+项目已新增 C# Windows 桌面壳，负责系统托盘、启动/停止 Python 后端、打开监控面板、日志/配置入口和开机自启动；Python 侧继续负责摄像头、YOLO、ReID、OpenCV 管线与 FastAPI 服务。
+
+构建说明见 `windows-desktop/README.md`。
+
 ### Android 客户端
 
 1. 用 Android Studio 打开 `android-app/` 目录

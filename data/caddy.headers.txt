@@ -1,0 +1,7 @@
+HTTP/1.1 200 OK
+Content-Length: 38638
+Content-Type: text/html; charset=utf-8
+Date: Sat, 11 Jul 2026 13:06:33 GMT
+Server: uvicorn
+Via: 1.1 Caddy
+

@@ -519,3 +519,92 @@ ValueError: Unable to configure formatter 'default'
 2026-05-11 18:41:48,338 INFO Waiting for application startup.
 2026-05-11 18:41:48,804 INFO Application startup complete.
 2026-05-11 18:41:48,804 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-07-03 14:55:19,972 INFO Tray app starting, python=C:\Users\DESKTOP-ZK\.conda\envs\DL\pythonw.exe
+2026-07-03 14:55:20,194 INFO Server starting on 0.0.0.0:8000
+2026-07-03 14:55:42,096 INFO Started server process [39976]
+2026-07-03 14:55:42,096 INFO Waiting for application startup.
+2026-07-03 14:55:42,113 INFO Application startup complete.
+2026-07-03 14:55:42,113 INFO Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-07-03 20:02:02,307 INFO Shutting down
+2026-07-03 20:02:02,401 INFO Waiting for connections to close. (CTRL+C to force quit)
+2026-07-03 20:02:04,944 INFO Waiting for application shutdown.
+2026-07-03 20:02:05,774 ERROR Traceback (most recent call last):
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\base.py", line 2125, in _exec_insertmany_context
+    dialect.do_execute(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+sqlite3.IntegrityError: UNIQUE constraint failed: identity_templates.person_id, identity_templates.template_index
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\starlette\routing.py", line 694, in lifespan
+    async with self.lifespan_context(app) as maybe_state:
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\contextlib.py", line 206, in __aexit__
+    await anext(self.gen)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\fastapi\routing.py", line 202, in merged_lifespan
+    async with original_context(app) as maybe_original_state:
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\starlette\routing.py", line 574, in __aexit__
+    await self._router.shutdown()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\starlette\routing.py", line 683, in shutdown
+    handler()
+  File "D:\mywork\monitor\app\api\main.py", line 215, in shutdown
+    services.pipeline.stop()
+  File "D:\mywork\monitor\app\core\pipeline.py", line 201, in stop
+    self._persist_identity_templates(force=True)
+  File "D:\mywork\monitor\app\core\pipeline.py", line 523, in _persist_identity_templates
+    self.identity_store.save_identity_templates(payload)
+  File "D:\mywork\monitor\app\storage\repository.py", line 219, in save_identity_templates
+    session.commit()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\session.py", line 2030, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\session.py", line 1311, in commit
+    self._prepare_impl()
+  File "<string>", line 2, in _prepare_impl
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\session.py", line 1286, in _prepare_impl
+    self.session.flush()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\session.py", line 4331, in flush
+    self._flush(objects)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\session.py", line 4466, in _flush
+    with util.safe_reraise():
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\util\langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\session.py", line 4427, in _flush
+    flush_context.execute()
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\unitofwork.py", line 466, in execute
+    rec.execute(self)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\orm\persistence.py", line 1143, in _emit_insert_statements
+    result = connection.execute(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\base.py", line 1419, in execute
+    return meth(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\sql\elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\base.py", line 1844, in _execute_context
+    return self._exec_insertmany_context(dialect, context)
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\base.py", line 2133, in _exec_insertmany_context
+    self._handle_dbapi_exception(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\base.py", line 2125, in _exec_insertmany_context
+    dialect.do_execute(
+  File "C:\Users\DESKTOP-ZK\.conda\envs\DL\lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) UNIQUE constraint failed: identity_templates.person_id, identity_templates.template_index
+[SQL: INSERT INTO identity_templates (person_id, template_index, feature_blob, feature_dim, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id]
+[parameters: ('person-4bef30695017', 0, <memory at 0x00000242106DC880>, 128, '2026-07-03 12:02:05.753873')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj)
+
+2026-07-03 20:02:05,774 ERROR Application shutdown failed. Exiting.
+2026-07-03 20:02:05,774 INFO Finished server process [39976]
+2026-07-03 20:02:05,775 INFO Server stopped
