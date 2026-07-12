@@ -158,6 +158,11 @@ def main() -> None:
     def on_open_web(icon: pystray.Icon, item: pystray.MenuItem) -> None:
         webbrowser.open(WEB_URL)
 
+    def on_open_recordings(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        recordings = Path(r"D:\download\Monitor")
+        recordings.mkdir(parents=True, exist_ok=True)
+        os.startfile(recordings)
+
     def on_start(icon: pystray.Icon, item: pystray.MenuItem) -> None:
         mgr.start()
 
@@ -172,10 +177,13 @@ def main() -> None:
         icon.stop()
 
     menu = pystray.Menu(
-        pystray.MenuItem("打开监控面板", on_open_web, default=True),
+        pystray.MenuItem(lambda item: "●  智能监控 · 运行正常" if mgr.running else "●  智能监控 · 服务已停止", None, enabled=False),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("启动服务", on_start, visible=lambda item: not mgr.running),
-        pystray.MenuItem("停止服务", on_stop, visible=lambda item: mgr.running),
+        pystray.MenuItem("打开监控面板", on_open_web, default=True),
+        pystray.MenuItem("打开录像目录", on_open_recordings),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("启动监控服务", on_start, visible=lambda item: not mgr.running),
+        pystray.MenuItem("停止监控服务", on_stop, visible=lambda item: mgr.running),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("开机自启动", on_autostart, checked=lambda item: _is_autostart()),
         pystray.Menu.SEPARATOR,

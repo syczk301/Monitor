@@ -725,51 +725,58 @@ class VideoAnalyticsPipeline:
         final_path.parent.mkdir(parents=True, exist_ok=True)
         if final_path.exists():
             final_path.unlink(missing_ok=True)
-        if audio_temp_path is None or not audio_temp_path.exists() or audio_temp_path.stat().st_size <= 44:
-            shutil.move(str(video_temp_path), str(final_path))
-            if audio_temp_path is not None and audio_temp_path.exists():
-                audio_temp_path.unlink(missing_ok=True)
-            return
+        has_audio = audio_temp_path is not None and audio_temp_path.exists() and audio_temp_path.stat().st_size > 44
         ffmpeg_executable = self._get_ffmpeg_executable()
         if ffmpeg_executable is None:
             shutil.move(str(video_temp_path), str(final_path))
-            audio_fallback_path = final_path.with_suffix(".wav")
-            if audio_fallback_path.exists():
+            if has_audio and audio_temp_path is not None:
+                audio_fallback_path = final_path.with_suffix(".wav")
                 audio_fallback_path.unlink(missing_ok=True)
-            shutil.move(str(audio_temp_path), str(audio_fallback_path))
+                shutil.move(str(audio_temp_path), str(audio_fallback_path))
             self._local_recording_status = "ffmpeg_unavailable"
             return
-        completed_process = subprocess.run(
+
+        command = [
+            ffmpeg_executable,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(video_temp_path),
+        ]
+        if has_audio and audio_temp_path is not None:
+            command.extend(["-i", str(audio_temp_path), "-map", "0:v:0", "-map", "1:a:0"])
+        else:
+            command.extend(["-map", "0:v:0", "-an"])
+        command.extend(
             [
-                ffmpeg_executable,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                str(video_temp_path),
-                "-i",
-                str(audio_temp_path),
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-shortest",
-                str(final_path),
-            ],
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-crf", "26",
+                "-pix_fmt", "yuv420p",
+            ]
+        )
+        if has_audio:
+            command.extend(["-c:a", "aac", "-b:a", "128k", "-shortest"])
+        command.extend(["-movflags", "+faststart", str(final_path)])
+
+        completed_process = subprocess.run(
+            command,
             capture_output=True,
             text=True,
             check=False,
         )
         if completed_process.returncode == 0:
             video_temp_path.unlink(missing_ok=True)
-            audio_temp_path.unlink(missing_ok=True)
+            if audio_temp_path is not None:
+                audio_temp_path.unlink(missing_ok=True)
             return
         shutil.move(str(video_temp_path), str(final_path))
-        audio_fallback_path = final_path.with_suffix(".wav")
-        if audio_fallback_path.exists():
+        if has_audio and audio_temp_path is not None:
+            audio_fallback_path = final_path.with_suffix(".wav")
             audio_fallback_path.unlink(missing_ok=True)
-        shutil.move(str(audio_temp_path), str(audio_fallback_path))
+            shutil.move(str(audio_temp_path), str(audio_fallback_path))
         error_text = completed_process.stderr.strip() or "unknown"
         self._local_recording_status = f"mux_error: {error_text}"[:120]
 

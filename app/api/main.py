@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import queue
+import subprocess
+from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -152,7 +155,87 @@ def recording_file(path: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="recording not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return FileResponse(recording_path, media_type="video/mp4", filename=recording_path.name)
+    return FileResponse(
+        recording_path,
+        media_type="video/mp4",
+        filename=recording_path.name,
+        content_disposition_type="inline",
+    )
+
+
+@router.get("/recordings/playback")
+def recording_playback(path: str):
+    try:
+        recording_path = services.pipeline.resolve_recording_path(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="recording not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    stat = recording_path.stat()
+    cache_key = hashlib.sha1(
+        f"stable-v2:{recording_path}:{stat.st_size}:{stat.st_mtime_ns}".encode("utf-8")
+    ).hexdigest()
+    cache_dir = Path("data/playback_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    browser_path = cache_dir / f"{cache_key}.mp4"
+
+    if browser_path.exists() and browser_path.stat().st_size > 0:
+        return FileResponse(
+            browser_path,
+            media_type="video/mp4",
+            filename=recording_path.name,
+            content_disposition_type="inline",
+        )
+
+    ffmpeg = services.pipeline._get_ffmpeg_executable()
+    if ffmpeg is None:
+        raise HTTPException(status_code=503, detail="ffmpeg unavailable")
+    temp_path = browser_path.with_suffix(".tmp.mp4")
+    temp_path.unlink(missing_ok=True)
+
+    completed = subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                str(recording_path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "28",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                str(temp_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if completed.returncode != 0 or not temp_path.exists() or temp_path.stat().st_size == 0:
+        temp_path.unlink(missing_ok=True)
+        detail = completed.stderr.strip() or "transcode failed"
+        raise HTTPException(status_code=500, detail=detail[-500:])
+    temp_path.replace(browser_path)
+
+    return FileResponse(
+        browser_path,
+        media_type="video/mp4",
+        filename=recording_path.name,
+        content_disposition_type="inline",
+    )
 
 
 @router.get("/audio/info")
@@ -218,6 +301,10 @@ def create_fastapi_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request) -> HTMLResponse:
         return templates.TemplateResponse("index.html", {"request": request})
+
+    @app.get("/api/tray-icon")
+    def tray_icon() -> FileResponse:
+        return FileResponse("assets/tray_icon.png", media_type="image/png")
 
     @app.get("/history", response_class=HTMLResponse)
     def history(request: Request) -> HTMLResponse:

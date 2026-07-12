@@ -5,7 +5,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>智能客流分析系统</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #0f172a;
@@ -21,7 +20,7 @@
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
     body {
-      font-family: 'Inter', -apple-system, 'Helvetica Neue', sans-serif;
+      font-family: 'Microsoft YaHei UI', 'Segoe UI', -apple-system, sans-serif;
       margin: 0;
       background: var(--bg);
       color: var(--text);
@@ -464,101 +463,99 @@
     }
 
     .app-float-bar { display: none; }
+    /* ===== 2026 light operations redesign ===== */
+    :root { --bg:#f6f7f9; --card-bg:#fff; --text:#15171c; --text-muted:#69707d; --primary:#4f46e5; --primary-hover:#4338ca; --accent:#1d9a5b; }
+    body { background:#f6f7f9; background-image:none; color:var(--text); }
+    .shell { min-height:100vh; display:grid; grid-template-columns:128px minmax(0,1fr); }
+    .side-nav { position:sticky; top:0; height:100vh; background:#fff; color:#252932; display:flex; flex-direction:column; align-items:stretch; border-right:1px solid #e1e3e8; }
+    .brand { height:94px; display:flex; align-items:center; justify-content:center; border-bottom:1px solid #e7e9ed; background:#fbfbfc; }
+    .brand img { width:54px; height:54px; box-shadow:0 0 0 1px rgba(79,70,229,.08); border:0; border-radius:50%; }
+    .side-link { color:#626975; background:transparent; text-decoration:none; display:flex; gap:10px; align-items:center; padding:18px 16px; font-size:14px; border-left:3px solid transparent; }
+    .side-link i { font-size:20px; width:24px; text-align:center; }
+    .bi { display:none; }
+    .side-link:hover { color:#34303f; background:#f6f6fa; }
+    .side-link.active { color:#4338ca; background:#efefff; border-left-color:#5b51e8; font-weight:650; }
+    .side-bottom { margin-top:auto; border-top:1px solid #e7e9ed; }
+    .workspace { min-width:0; }
+    .topbar { height:94px; display:flex; align-items:center; gap:28px; padding:0 30px; background:#fff; border-bottom:1px solid #e1e3e8; }
+    .topbar h1 { font-size:24px; margin:0; font-weight:700; }
+    .site-select { border:1px solid #d9dce3; border-radius:8px; padding:11px 14px; background:#fff; color:#333842; min-width:230px; }
+    .health { display:flex; align-items:center; gap:8px; color:#178c50; font-weight:650; }
+    .health::before { content:''; width:9px; height:9px; border-radius:50%; background:#21a862; box-shadow:0 0 0 4px #e3f5eb; }
+    .alert-link { margin-left:auto; text-decoration:none; color:#fff; background:#4f46e5; padding:12px 18px; border-radius:8px; font-weight:650; }
+    .dashboard { padding:28px 30px 34px; display:grid; grid-template-columns:minmax(0,1.9fr) minmax(320px,.95fr); gap:34px; max-width:1600px; }
+    .section-title { margin:0 0 14px; font-size:20px; }
+    .video-frame { background:#111; border:1px solid #d9dce2; border-radius:10px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+    #stream-container { border-radius:0!important; border:0!important; min-height:0; aspect-ratio:16/9; background:#111; }
+    #stream { box-shadow:none; }
+    .camera-toolbar { height:72px; display:flex; align-items:center; gap:8px; padding:0 16px; background:#fff; border-top:1px solid #e2e4e8; }
+    .tool-btn { display:inline-flex; align-items:center; gap:8px; color:#272b33; background:transparent; border:0; border-radius:7px; padding:10px 12px; box-shadow:none; }
+    .tool-btn:hover { background:#f0f1f4; }
+    .tool-btn.active { color:#4038d5; background:#eeedff; border:0; }
+    .tool-btn i { font-size:19px; }
+    .toolbar-spacer { flex:1; }
+    .quality-select { border:1px solid #d9dce3; background:#fff; border-radius:7px; padding:9px 12px; }
+    .metric-strip { margin-top:18px; display:grid; grid-template-columns:repeat(6,1fr); background:#fff; border:1px solid #e0e2e7; border-radius:9px; }
+    .metric { min-width:0; padding:16px 18px; border-right:1px solid #e8e9ed; }
+    .metric:last-child { border:0; }
+    .metric span { display:block; color:#777e89; font-size:12px; margin-bottom:5px; }
+    .metric strong { font-size:17px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .metric strong.primary { color:#4f46e5; font-size:22px; }
+    .activity-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    .activity-date { color:#666d78; font-size:13px; }
+    .activity-list { border-top:1px solid #dfe2e7; }
+    .activity-row { display:grid; grid-template-columns:78px 34px 1fr; gap:10px; align-items:center; padding:17px 4px; border-bottom:1px solid #e3e5e9; }
+    .activity-time { color:#737985; font-size:13px; }
+    .activity-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:50%; color:#178c50; background:#e9f7f0; }
+    .activity-icon.warn { color:#a66500; background:#fff3dc; }
+    .activity-copy strong { display:block; font-size:15px; }
+    .activity-copy small { color:#7a818c; }
+    .settings-panel,.roi-section { margin-top:22px; padding:18px; background:#fff; border:1px solid #e0e2e7; border-radius:9px; }
+    .settings-grid { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
+    .settings-grid label { display:grid; gap:6px; font-size:12px; color:#69707d; }
+    .settings-grid select { border:1px solid #d7dae1; border-radius:7px; padding:10px; background:#fff; color:#252932; }
+    #cam-apply { border:0; border-radius:7px; background:#4f46e5; color:#fff; padding:11px 18px; font-weight:650; }
+    .status-copy { color:#7a818c; font-size:12px; margin:8px 0 0; }
+    .roi-section h2 { font-size:16px; margin:0 0 12px!important; }
+    .roi-configs { margin-top:0; }
+    .roi-panel,.roi-panel-empty { background:#f8f9fb; color:#69707d; border-color:#daddE4; }
+    .roi-panel-title,.roi-panel label { color:#242832; }
+    .roi-panel input { background:#fff; color:#242832; border-color:#d7dae1; }
+    .app-float-bar { display:none; }
+    @media(max-width:1050px){.shell{grid-template-columns:76px 1fr}.side-link span{display:none}.side-link{justify-content:center}.dashboard{grid-template-columns:1fr}.metric-strip{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:680px){.shell{display:block}.side-nav{height:auto;position:relative;flex-direction:row}.brand{width:70px;height:64px}.brand img{width:42px;height:42px}.side-link{padding:18px 12px}.side-bottom{margin-left:auto;border:0}.topbar{height:auto;padding:16px;flex-wrap:wrap;gap:12px}.topbar h1{font-size:19px}.site-select{min-width:0}.dashboard{padding:18px 14px;gap:24px}.metric-strip{grid-template-columns:repeat(2,1fr)}.camera-toolbar{overflow-x:auto}.activity-row{grid-template-columns:65px 30px 1fr}}
   </style>
 </head>
 
 <body>
-  <div class="header">
-    <h1><span class="status-dot"></span>智能客流分析系统</h1>
-    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
-      <a href="/recordings" class="nav-btn">查看录像</a>
-      <a href="/history" class="nav-btn">排查历史记录</a>
-    </div>
-  </div>
-  <div class="wrap">
-    <div class="card stream-section">
-      <div class="monitor-head">
-        <h2 style="margin:0;">实时监控画面</h2>
-        <div class="monitor-toolbar">
-          <span class="monitor-toolbar-hint">滚轮缩放，拖动平移；"区域圈选"用于高级微调</span>
-          <div class="monitor-toolbar-buttons">
-            <button id="sound-toggle" type="button" class="tool-btn">开启声音</button>
-            <button id="record-toggle" type="button" class="tool-btn">开启录像</button>
-            <button id="roi-toggle" type="button" class="tool-btn">高级圈选</button>
+  <div class="shell">
+    <nav class="side-nav" aria-label="主导航">
+      <div class="brand"><img src="data:image/png;base64,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" alt="智能监控"></div>
+      <a class="side-link active" href="/"><i class="bi bi-display"></i><span>实时画面</span></a>
+      <a class="side-link" href="/history"><i class="bi bi-clock-history"></i><span>历史记录</span></a>
+      <a class="side-link" href="/recordings"><i class="bi bi-play-circle"></i><span>录像回放</span></a>
+      <a class="side-link side-bottom" href="#camera-settings"><i class="bi bi-gear"></i><span>设备</span></a>
+    </nav>
+    <main class="workspace">
+      <header class="topbar"><h1>智能监控</h1><select class="site-select"><option>示范园区 · 1号出入口</option></select><div class="health">系统运行正常</div><a class="alert-link" href="/history"><i class="bi bi-exclamation-triangle"></i> 查看异常</a></header>
+      <div class="dashboard">
+        <section class="monitor-column">
+          <h2 class="section-title">实时画面</h2>
+          <div class="video-frame">
+            <div id="stream-container" style="position:relative;overflow:hidden"><div id="stream-wrapper" style="position:absolute;top:0;left:0;transform-origin:0 0;transition:transform .05s linear"><img id="stream" src="/stream" alt="实时监控画面" style="border:0;border-radius:0;margin:0;display:block;width:100%;height:100%"><div id="roi-layer" style="position:absolute;inset:0;cursor:grab"></div></div></div>
+            <div class="camera-toolbar"><button id="record-toggle" type="button" class="tool-btn"><i class="bi bi-pause-fill"></i>录像</button><button id="sound-toggle" type="button" class="tool-btn"><i class="bi bi-volume-up"></i>声音</button><button id="roi-toggle" type="button" class="tool-btn"><i class="bi bi-bounding-box"></i>区域</button><button type="button" class="tool-btn" onclick="location.reload()"><i class="bi bi-arrow-clockwise"></i>刷新</button><span class="toolbar-spacer"></span><select class="quality-select" aria-label="画质"><option>高清</option><option>流畅</option></select></div>
           </div>
-        </div>
+          <p id="stream-error" style="color:#d9363e;margin:10px 0 0;font-size:13px"></p>
+          <div class="metric-strip"><div class="metric"><span>当前在场</span><strong id="targets" class="primary">--</strong></div><div class="metric"><span>录像</span><strong>已开启</strong></div><div class="metric"><span>帧率</span><strong id="fps">--</strong></div><div class="metric"><span>延迟</span><strong id="latency">--</strong></div><div class="metric"><span>GPU</span><strong id="gpu">--</strong></div><div class="metric"><span>设备</span><strong id="capture-status">--</strong><span id="capture-backend" style="display:none">--</span></div></div>
+          <p id="audio-status" class="status-copy">声音默认关闭。</p><p id="record-status" class="status-copy">录像保存到 D:\download\Monitor。</p>
+          <section id="camera-settings" class="settings-panel"><h2 class="section-title" style="font-size:16px">摄像头设置</h2><div class="settings-grid"><label>分辨率<select id="cam-res"><option value="640x480">480p</option><option value="1280x720">720p</option><option value="1920x1080">1080p</option><option value="2560x1440">1440p</option><option value="3840x2160" selected>4K</option></select></label><label>目标帧率<select id="cam-fps"><option value="5">5 FPS</option><option value="15">15 FPS</option><option value="30" selected>30 FPS</option><option value="60">60 FPS</option></select></label><button id="cam-apply" type="button">应用设置</button></div><p id="cam-msg" class="status-copy"></p></section>
+          <section class="roi-section"><h2>区域检测参数</h2><div id="roi-configs" class="roi-configs"></div></section>
+        </section>
+        <aside class="activity-column"><div class="activity-head"><h2 class="section-title">今天动态</h2><span class="activity-date">2026-07-12 <i class="bi bi-chevron-down"></i></span></div><div class="activity-list"><div class="activity-row"><span class="activity-time">10:32:31</span><span class="activity-icon"><i class="bi bi-person-dash"></i></span><span class="activity-copy"><strong>人员离开</strong><small>1号出入口 · 通道 1</small></span></div><div class="activity-row"><span class="activity-time">10:31:58</span><span class="activity-icon"><i class="bi bi-person-plus"></i></span><span class="activity-copy"><strong>人员进入</strong><small>1号出入口 · 通道 1</small></span></div><div class="activity-row"><span class="activity-time">10:28:42</span><span class="activity-icon warn"><i class="bi bi-box-seam"></i></span><span class="activity-copy"><strong>物品移动</strong><small>西侧区域</small></span></div><div class="activity-row"><span class="activity-time">10:15:33</span><span class="activity-icon warn"><i class="bi bi-bell"></i></span><span class="activity-copy"><strong>区域逗留提醒</strong><small>东侧区域</small></span></div><div class="activity-row"><span class="activity-time">10:05:12</span><span class="activity-icon"><i class="bi bi-shield-check"></i></span><span class="activity-copy"><strong>系统自检完成</strong><small>所有设备正常</small></span></div></div></aside>
       </div>
-      <div style="position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);"
-        id="stream-container">
-        <div id="stream-wrapper" style="position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform 0.05s linear;">
-          <img id="stream" src="/stream" alt="stream" style="border:none; border-radius:0; padding:0; margin:0; display:block; width:100%; height:100%;" />
-          <div id="roi-layer" style="position: absolute; top:0; left:0; right:0; bottom:0; cursor: grab;"></div>
-        </div>
-        <div class="app-float-bar">
-          <button id="app-sound-toggle" type="button" class="app-float-btn">开启声音</button>
-          <button id="app-record-toggle" type="button" class="app-float-btn">开启录像</button>
-          <button id="app-roi-toggle" type="button" class="app-float-btn" onclick="document.getElementById('roi-toggle').click()">区域圈选</button>
-          <button class="app-float-btn" onclick="location.reload()">刷新画面</button>
-        </div>
-      </div>
-      <p id="stream-error" style="color: #ef4444; margin-top: 12px; font-size: 0.9em;"></p>
-      <p id="audio-status" style="color: var(--text-muted); margin-top: 8px; font-size: 0.85em;">声音默认关闭，点击“开启声音”后播放后端机器默认麦克风。</p>
-      <p id="record-status" style="color: var(--text-muted); margin-top: 8px; font-size: 0.85em;">本地录像默认保存到 D:\download\Monitor，按天建目录、按小时分片，最近一月循环覆盖。</p>
-      <div class="roi-section">
-        <h2 style="margin:18px 0 12px;">ROI 检测参数</h2>
-        <div id="roi-configs" class="roi-configs"></div>
-      </div>
-    </div>
-    <div class="card kpi-section">
-      <div class="kpi-section-title">运行指标</div>
-      <h2>运行指标</h2>
-      <div class="kpi">
-        <div><strong>FPS</strong>
-          <p id="fps">--</p>
-        </div>
-        <div><strong>延迟</strong>
-          <p id="latency">--</p>
-        </div>
-        <div><strong>在场人数</strong>
-          <p id="targets" class="value-highlight">--</p>
-        </div>
-        <div><strong>GPU</strong>
-          <p id="gpu">--</p>
-        </div>
-        <div><strong>采集</strong>
-          <p id="capture-status">--</p>
-        </div>
-        <div><strong>后端</strong>
-          <p id="capture-backend">--</p>
-        </div>
-      </div>
-      <div class="cam-settings" style="margin-top:20px;">
-        <div class="kpi-section-title" style="margin-bottom:12px;">摄像头设置</div>
-        <h2 style="font-size:1rem;">摄像头设置</h2>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-          <label style="font-size:0.8rem; color:var(--text-muted);">分辨率
-            <select id="cam-res" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,23,42,0.8);color:var(--text);font-size:0.85rem;">
-              <option value="640x480">480p (640x480)</option>
-              <option value="1280x720">720p (1280x720)</option>
-              <option value="1920x1080">1080p (1920x1080)</option>
-              <option value="2560x1440">1440p (2560x1440)</option>
-              <option value="3840x2160" selected>4K (3840x2160)</option>
-            </select>
-          </label>
-          <label style="font-size:0.8rem; color:var(--text-muted);">目标帧率
-            <select id="cam-fps" style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(15,23,42,0.8);color:var(--text);font-size:0.85rem;">
-              <option value="5">5 FPS</option>
-              <option value="15">15 FPS</option>
-              <option value="30" selected>30 FPS</option>
-              <option value="60">60 FPS</option>
-            </select>
-          </label>
-        </div>
-        <button id="cam-apply" type="button" style="margin-top:10px;width:100%;padding:10px;border-radius:8px;border:none;background:var(--primary);color:white;font-weight:600;font-size:0.85rem;cursor:pointer;transition:all 0.2s;">应用</button>
-        <p id="cam-msg" style="font-size:0.78rem;color:var(--accent);margin:6px 0 0;min-height:1.2em;"></p>
-      </div>
-    </div>
+    </main>
   </div>
+  <button id="app-sound-toggle" hidden></button><button id="app-record-toggle" hidden></button><button id="app-roi-toggle" hidden></button>
   <script>
     const isAppShell = navigator.userAgent.includes("IntelligentFlowShell");
     if (isAppShell) {

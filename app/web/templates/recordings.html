@@ -5,7 +5,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>录像查看 - 智能客流分析系统</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #0f172a;
@@ -230,10 +229,49 @@
         flex-direction: column;
       }
     }
+
+    /* Shared light monitoring shell */
+    :root { --bg:#f6f7f9; --card-bg:#fff; --text:#17191f; --text-muted:#6f7682; --primary:#4f46e5; --primary-hover:#4338ca; --border:#e1e3e8; }
+    body { font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; background:#f6f7f9; background-image:none; color:var(--text); }
+    .shell { min-height:100vh; display:grid; grid-template-columns:128px minmax(0,1fr); }
+    .side-nav { position:sticky; top:0; height:100vh; background:#fff; border-right:1px solid #e1e3e8; display:flex; flex-direction:column; }
+    .brand { height:94px; display:flex; align-items:center; justify-content:center; background:#fbfbfc; border-bottom:1px solid #e7e9ed; color:#272b33; font-weight:700; font-size:16px; }
+    .side-link { color:#626975; text-decoration:none; padding:18px 16px; border-left:3px solid transparent; font-size:14px; }
+    .side-link:hover { background:#f6f6fa; color:#34303f; }
+    .side-link.active { color:#4338ca; background:#efefff; border-left-color:#5b51e8; font-weight:650; }
+    .side-bottom { margin-top:auto; border-top:1px solid #e7e9ed; }
+    .workspace { min-width:0; }
+    .header { height:94px; padding:0 30px; background:#fff; border-bottom:1px solid #e1e3e8; backdrop-filter:none; }
+    .header h1 { color:#17191f; font-size:24px; font-weight:700; }
+    .nav-btn { color:#4f46e5; }
+    .nav-btn:hover { color:#3730a3; }
+    .wrap { max-width:1600px; margin:0; padding:28px 30px 40px; grid-template-columns:360px minmax(0,1fr); gap:24px; }
+    .card { background:#fff; border:1px solid #e1e3e8; border-radius:10px; box-shadow:0 1px 2px rgba(15,23,42,.04); backdrop-filter:none; }
+    button { background:#fff; color:#30343c; border:1px solid #d8dbe2; border-radius:7px; }
+    button:hover { background:#f4f5f7; }
+    button.primary { background:#4f46e5; }
+    .record-day-title { color:#747b86; text-transform:none; letter-spacing:0; }
+    .record-item { background:#fff; border:1px solid #e1e3e8; border-radius:8px; }
+    .record-item:hover { background:#f7f7fa; }
+    .record-item.active { border-color:#8b84ee; background:#efefff; box-shadow:0 0 0 1px #d5d2ff inset; }
+    .record-name { color:#232730; }
+    .video-wrap { border-color:#dfe2e7; background:#111; border-radius:9px; }
+    .video-wrap video.is-preparing { visibility:hidden; height:0; }
+    .empty { background:#fafbfc; border-color:#d9dce3; color:#757c87; border-radius:8px; }
+    @media(max-width:980px){.shell{display:block}.side-nav{position:relative;height:auto;flex-direction:row;overflow-x:auto}.brand{height:64px;min-width:110px}.side-link{white-space:nowrap;padding:20px 12px}.side-bottom{margin:0}.header{height:auto;padding:18px 16px}.wrap{padding:18px 14px}}
   </style>
 </head>
 
 <body>
+  <div class="shell">
+    <nav class="side-nav" aria-label="主导航">
+      <div class="brand">智能监控</div>
+      <a class="side-link" href="/">实时画面</a>
+      <a class="side-link" href="/history">历史记录</a>
+      <a class="side-link active" href="/recordings">录像回放</a>
+      <a class="side-link side-bottom" href="/#camera-settings">设备</a>
+    </nav>
+    <main class="workspace">
   <div class="header">
     <h1>录像查看</h1>
     <div class="nav-row">
@@ -254,7 +292,7 @@
     <div class="card player-card">
       <h2>播放预览</h2>
       <div class="video-wrap">
-        <video id="player" controls preload="metadata"></video>
+        <video id="player" controls preload="auto"></video>
       </div>
       <div id="player-empty" class="empty">选择左侧录像后开始播放。</div>
       <div id="player-meta" class="player-meta" style="display:none;"></div>
@@ -263,6 +301,8 @@
         <a id="player-download" class="nav-btn" href="#" download>下载文件</a>
       </div>
     </div>
+  </div>
+    </main>
   </div>
 
   <script>
@@ -289,8 +329,9 @@
       return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
     }
 
-    function recordingUrl(path) {
-      return `/api/recordings/file?path=${encodeURIComponent(path)}`;
+    function recordingUrl(path, playback = false) {
+      const endpoint = playback ? "/api/recordings/playback" : "/api/recordings/file";
+      return `${endpoint}?path=${encodeURIComponent(path)}`;
     }
 
     function renderSelection(item) {
@@ -300,12 +341,24 @@
       const playerActions = document.getElementById("player-actions");
       const openLink = document.getElementById("player-open");
       const downloadLink = document.getElementById("player-download");
-      const url = recordingUrl(item.relative_path);
+      const url = recordingUrl(item.relative_path, true);
+      const originalUrl = recordingUrl(item.relative_path);
 
       selectedPath = item.relative_path;
+      player.classList.add("is-preparing");
+      playerEmpty.style.display = "block";
+      playerEmpty.textContent = "首次播放正在准备兼容版本，请稍候；完成后进度条将保持稳定。";
       player.src = url;
       player.load();
-      playerEmpty.style.display = "none";
+      player.onloadeddata = () => {
+        player.classList.remove("is-preparing");
+        playerEmpty.style.display = "none";
+      };
+      player.onerror = () => {
+        player.classList.add("is-preparing");
+        playerEmpty.style.display = "block";
+        playerEmpty.textContent = "录像准备失败，请稍后重试。";
+      };
       playerMeta.style.display = "grid";
       playerActions.style.display = "flex";
       playerMeta.innerHTML = `
@@ -315,7 +368,7 @@
         <div>路径: ${item.relative_path}</div>
       `;
       openLink.href = url;
-      downloadLink.href = url;
+      downloadLink.href = originalUrl;
       document.querySelectorAll(".record-item").forEach((el) => {
         el.classList.toggle("active", el.dataset.path === selectedPath);
       });

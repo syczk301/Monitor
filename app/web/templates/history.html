@@ -5,7 +5,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>历史记录 - 智能客流分析系统</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #0f172a;
@@ -413,10 +412,53 @@
     .app-list { display: none; }
 
     body.app-shell .action-row { display: none; }
+
+    /* Shared light monitoring shell */
+    :root { --bg:#f6f7f9; --card-bg:#fff; --text:#17191f; --text-muted:#6f7682; --primary:#4f46e5; --primary-hover:#4338ca; --danger:#d63f49; --danger-hover:#bd303a; --border:#e1e3e8; }
+    body { font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; background:#f6f7f9; background-image:none; color:var(--text); }
+    .shell { min-height:100vh; display:grid; grid-template-columns:128px minmax(0,1fr); }
+    .side-nav { position:sticky; top:0; height:100vh; background:#fff; border-right:1px solid #e1e3e8; display:flex; flex-direction:column; }
+    .brand { height:94px; display:flex; align-items:center; justify-content:center; background:#fbfbfc; border-bottom:1px solid #e7e9ed; color:#272b33; font-weight:700; font-size:16px; }
+    .side-link { color:#626975; text-decoration:none; padding:18px 16px; border-left:3px solid transparent; font-size:14px; }
+    .side-link:hover { background:#f6f6fa; color:#34303f; }
+    .side-link.active { color:#4338ca; background:#efefff; border-left-color:#5b51e8; font-weight:650; }
+    .side-bottom { margin-top:auto; border-top:1px solid #e7e9ed; }
+    .workspace { min-width:0; }
+    .header { height:94px; padding:0 30px; background:#fff; border-bottom:1px solid #e1e3e8; backdrop-filter:none; }
+    .header h1 { color:#17191f; font-size:24px; font-weight:700; }
+    .nav-btn { color:#4f46e5; }
+    .nav-btn:hover { color:#3730a3; }
+    .wrap { max-width:1600px; margin:0; padding:28px 30px 40px; }
+    .card { background:#fff; border:1px solid #e1e3e8; border-radius:10px; box-shadow:0 1px 2px rgba(15,23,42,.04); backdrop-filter:none; }
+    .main-card { padding:20px; }
+    button { background:#fff; color:#30343c; border:1px solid #d8dbe2; border-radius:7px; }
+    button:hover { background:#f4f5f7; }
+    button.primary { background:#4f46e5; box-shadow:none; }
+    button.danger { background:#fff; color:#c9343e; border:1px solid #efc9cd; }
+    th { background:#f7f8fa; color:#686f7b; text-transform:none; letter-spacing:0; }
+    th,td { border-bottom:1px solid #e8e9ed; }
+    input[type=text] { background:#fff; border:1px solid #d8dbe2; color:#252932; border-radius:6px; }
+    .group-header { background:#fff; }
+    .group-header:hover { background:#f8f8fb; }
+    .group-child { background:#fafbfc; }
+    .group-child td { color:#555d68; }
+    .status-active { background:#e7f7ef; color:#178c50; }
+    .status-left { background:#eef0f3; color:#6e7580; }
+    pre { background:#f7f8fa; color:#34303f; border-color:#e1e3e8; }
+    @media(max-width:800px){.shell{display:block}.side-nav{position:relative;height:auto;flex-direction:row;overflow-x:auto}.brand{height:64px;min-width:110px}.side-link{white-space:nowrap;padding:20px 12px}.side-bottom{margin:0}.header{height:auto;padding:18px 16px}.wrap{padding:18px 14px}}
   </style>
 </head>
 
 <body>
+  <div class="shell">
+    <nav class="side-nav" aria-label="主导航">
+      <div class="brand">智能监控</div>
+      <a class="side-link" href="/">实时画面</a>
+      <a class="side-link active" href="/history">历史记录</a>
+      <a class="side-link" href="/recordings">录像回放</a>
+      <a class="side-link side-bottom" href="/#camera-settings">设备</a>
+    </nav>
+    <main class="workspace">
   <div class="header">
     <h1>历史记录追踪</h1>
     <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
@@ -467,6 +509,8 @@
       <h2 class="report-title">报表数据</h2>
       <pre id="report">{}</pre>
     </div>
+  </div>
+    </main>
   </div>
 
   <script>

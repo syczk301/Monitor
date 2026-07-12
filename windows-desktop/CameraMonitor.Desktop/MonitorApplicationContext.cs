@@ -245,4 +245,5 @@ internal sealed class MonitorApplicationContext : ApplicationContext
         [JsonPropertyName("tracked_targets")]
         public int TrackedTargets { get; set; }
     }
+
 }

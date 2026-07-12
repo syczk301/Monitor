@@ -8,6 +8,10 @@ camera_monitor.egg-info/
 data/*.db
 data/*.sqlite
 data/*.log
+data/*.pid
+data/playback_cache/
+output/playwright/
+.playwright-cli/
 yolov8n.pt
 yolov8s.pt
 .env
