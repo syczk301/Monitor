@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import queue
+import json
 import shutil
 import subprocess
 import threading
 import time
 import wave
+from collections import deque
 from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime
@@ -141,7 +143,18 @@ class VideoAnalyticsPipeline:
         self._client_lock = threading.Lock()
         self._idle_timer: threading.Timer | None = None
         self._idle_timeout_seconds = 15
-        self._local_recording_enabled = settings.local_recording_enabled
+        self._recording_settings_path = Path("data/recording_settings.json")
+        self._recording_mode = self._load_recording_mode()
+        self._local_recording_enabled = self._recording_mode == "continuous"
+        self._recording_active = self._local_recording_enabled
+        self._recording_triggered_by = "continuous" if self._recording_active else "none"
+        self._auto_stop_deadline: float | None = None
+        self._stable_presence_count = 0
+        self._recording_state_lock = threading.Lock()
+        self._preroll_seconds = 3
+        self._auto_stop_delay_seconds = 10
+        self._preroll_frames: deque[tuple[int, bytes]] = deque()
+        self._preroll_pending = False
         self._local_recording_output_dir = Path(settings.local_recording_output_dir)
         self._local_recording_retention_days = max(1, settings.local_recording_retention_days)
         self._local_recording_segment_minutes = max(1, settings.local_recording_segment_minutes)
@@ -151,12 +164,30 @@ class VideoAnalyticsPipeline:
         self._video_writer_segment_start: datetime | None = None
         self._video_writer_path: Path | None = None
         self._video_temp_path: Path | None = None
+        self._video_writer_fps = 0.0
+        self._video_timeline_start_ms: int | None = None
+        self._video_frames_written = 0
+        self._video_last_frame: np.ndarray | None = None
         self._audio_wave_file: wave.Wave_write | None = None
         self._audio_temp_path: Path | None = None
         self._audio_subscriber_id: int | None = None
         self._audio_subscriber_queue: queue.Queue[bytes] | None = None
         self._ffmpeg_executable: str | None = None
         self._recording_lock = threading.Lock()
+
+    def _load_recording_mode(self) -> str:
+        try:
+            payload = json.loads(self._recording_settings_path.read_text(encoding="utf-8"))
+            mode = payload.get("mode")
+            return mode if mode in {"off", "auto", "continuous"} else "off"
+        except Exception:
+            return "off"
+
+    def _persist_recording_mode(self) -> None:
+        self._recording_settings_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self._recording_settings_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps({"mode": self._recording_mode}, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(self._recording_settings_path)
 
     def start(self) -> None:
         if self.is_running():
@@ -256,15 +287,38 @@ class VideoAnalyticsPipeline:
         return self.get_capture_info()
 
     def set_local_recording_enabled(self, enabled: bool) -> dict:
-        self._local_recording_enabled = enabled
-        settings.local_recording_enabled = enabled
-        self._local_recording_status = "waiting" if enabled else "disabled"
+        return self.set_recording_mode("continuous" if enabled else "off")
+
+    def set_recording_mode(self, mode: str) -> dict:
+        if mode not in {"off", "auto", "continuous"}:
+            raise ValueError("invalid recording mode")
+        with self._recording_state_lock:
+            self._recording_mode = mode
+            self._auto_stop_deadline = None
+            if mode == "continuous":
+                self._recording_active = True
+                self._recording_triggered_by = "continuous"
+                self._local_recording_enabled = True
+                self._local_recording_status = "waiting"
+            elif mode == "auto":
+                self._recording_active = self._stable_presence_count > 0
+                self._recording_triggered_by = "person" if self._recording_active else "none"
+                self._local_recording_enabled = self._recording_active
+                self._preroll_pending = self._recording_active
+                self._local_recording_status = "waiting" if not self._recording_active else "starting"
+            else:
+                self._recording_active = False
+                self._recording_triggered_by = "none"
+                self._local_recording_enabled = False
+                self._local_recording_status = "disabled"
+        settings.local_recording_enabled = mode == "continuous"
+        self._persist_recording_mode()
         with self._client_lock:
             if self._idle_timer is not None:
                 self._idle_timer.cancel()
                 self._idle_timer = None
-            should_stop = not enabled and self._client_count == 0 and not settings.pipeline_run_without_clients
-        if enabled:
+            should_stop = mode == "off" and self._client_count == 0 and not settings.pipeline_run_without_clients
+        if mode != "off":
             self.start()
         else:
             with self._recording_lock:
@@ -288,6 +342,10 @@ class VideoAnalyticsPipeline:
             "capture_status": self.stats.capture_status,
             "capture_backend": self.stats.capture_backend,
             "local_recording_enabled": self._local_recording_enabled,
+            "recording_mode": self._recording_mode,
+            "recording_active": self._recording_active,
+            "recording_triggered_by": self._recording_triggered_by,
+            "auto_stop_remaining_ms": max(0, int((self._auto_stop_deadline - time.monotonic()) * 1000)) if self._auto_stop_deadline else 0,
             "local_recording_status": self._local_recording_status,
             "local_recording_output_dir": str(self._local_recording_output_dir),
             "local_recording_retention_days": self._local_recording_retention_days,
@@ -312,7 +370,7 @@ class VideoAnalyticsPipeline:
         return self._should_keep_running_without_clients()
 
     def _should_keep_running_without_clients(self) -> bool:
-        return settings.pipeline_run_without_clients or self._local_recording_enabled
+        return settings.pipeline_run_without_clients or self._recording_mode != "off"
 
     @staticmethod
     def _drain_queue(q: queue.Queue) -> None:
@@ -419,6 +477,7 @@ class VideoAnalyticsPipeline:
             packet = FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=frame)
             self._put_latest(self.frame_queue, packet)
             recording_frame = self._prepare_recording_frame(rendered)
+            self._remember_preroll_frame(ts_ms, recording_frame)
             self._put_latest(
                 self._video_queue,
                 FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=recording_frame),
@@ -431,6 +490,18 @@ class VideoAnalyticsPipeline:
                 time.sleep(sleep_time)
         if cap is not None:
             cap.release()
+
+    def _remember_preroll_frame(self, ts_ms: int, frame: np.ndarray) -> None:
+        if self._recording_mode != "auto":
+            return
+        ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if not ok:
+            return
+        with self._recording_state_lock:
+            self._preroll_frames.append((ts_ms, bytes(encoded)))
+            cutoff = ts_ms - self._preroll_seconds * 1000
+            while self._preroll_frames and self._preroll_frames[0][0] < cutoff:
+                self._preroll_frames.popleft()
 
     def _inference_loop(self) -> None:
         prev_ts = time.time()
@@ -551,6 +622,7 @@ class VideoAnalyticsPipeline:
 
     def _video_record_loop(self) -> None:
         while not self._stop_event.is_set():
+            self._refresh_auto_recording_state()
             try:
                 packet = self._video_queue.get(timeout=0.2)
             except queue.Empty:
@@ -566,10 +638,10 @@ class VideoAnalyticsPipeline:
                 continue
             try:
                 with self._recording_lock:
-                    writer = self._ensure_video_writer(packet)
-                    if writer is None:
+                    for preroll_packet in self._take_preroll_packets():
+                        self._write_video_packet(preroll_packet)
+                    if not self._write_video_packet(packet):
                         continue
-                    writer.write(packet.frame)
                 self._local_recording_status = "recording"
             except Exception as exc:
                 self._local_recording_status = f"error: {exc!s}"[:120]
@@ -580,6 +652,19 @@ class VideoAnalyticsPipeline:
         with self._recording_lock:
             self._close_audio_writer(finalize=True)
             self._close_video_writer()
+
+    def _take_preroll_packets(self) -> list[FramePacket]:
+        with self._recording_state_lock:
+            if not self._preroll_pending:
+                return []
+            encoded_frames = list(self._preroll_frames)
+            self._preroll_pending = False
+        packets: list[FramePacket] = []
+        for ts_ms, encoded in encoded_frames:
+            frame = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if frame is not None:
+                packets.append(FramePacket(frame_id=-1, ts_ms=ts_ms, frame=frame))
+        return packets
 
     def _audio_record_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -612,7 +697,12 @@ class VideoAnalyticsPipeline:
             self._finalize_segment(final_path, video_temp_path, audio_temp_path)
 
     def _ensure_video_writer(self, packet: FramePacket) -> cv2.VideoWriter | None:
-        segment_start = self._segment_start(packet.ts_ms, self._local_recording_segment_minutes)
+        packet_time = datetime.fromtimestamp(packet.ts_ms / 1000.0)
+        if self._recording_mode == "auto" and self._video_writer_segment_start is not None:
+            segment_end_ms = int(self._video_writer_segment_start.timestamp() * 1000) + self._local_recording_segment_minutes * 60_000
+            if self._video_writer is not None and self._video_temp_path is not None and packet.ts_ms < segment_end_ms:
+                return self._video_writer
+        segment_start = packet_time if self._recording_mode == "auto" else self._segment_start(packet.ts_ms, self._local_recording_segment_minutes)
         frame_height, frame_width = packet.frame.shape[:2]
         if (
             self._video_writer is not None
@@ -639,12 +729,60 @@ class VideoAnalyticsPipeline:
             return None
         self._open_audio_writer(segment_start)
         self._video_writer = writer
+        self._video_writer_fps = fps
+        self._video_timeline_start_ms = packet.ts_ms
+        self._video_frames_written = 0
+        self._video_last_frame = None
         self._video_writer_segment_start = segment_start
         self._video_temp_path = path
         self._video_writer_path = self._segment_output_path(segment_start)
         self._local_recording_current_file = str(self._video_writer_path)
         self._local_recording_status = "recording"
         return writer
+
+    def _write_video_packet(self, packet: FramePacket) -> bool:
+        """Write a frame according to capture time instead of arrival count.
+
+        OpenCV's VideoWriter produces constant-frame-rate files.  The capture
+        and resize pipeline may deliver fewer frames than the configured FPS,
+        especially at high camera resolutions.  Writing each delivered frame
+        only once would therefore shorten the file and make playback look
+        accelerated.  Duplicate the previous frame as needed so file duration
+        follows the packets' wall-clock timestamps.
+        """
+        writer = self._ensure_video_writer(packet)
+        if writer is None:
+            return False
+
+        fps = self._video_writer_fps or float(max(1, settings.target_fps))
+        if self._video_timeline_start_ms is None or packet.ts_ms < self._video_timeline_start_ms:
+            self._video_timeline_start_ms = packet.ts_ms
+            self._video_frames_written = 0
+            self._video_last_frame = None
+
+        elapsed_ms = max(0, packet.ts_ms - self._video_timeline_start_ms)
+        target_frame_count = max(1, int(round(elapsed_ms * fps / 1000.0)) + 1)
+        frames_due = target_frame_count - self._video_frames_written
+        if frames_due <= 0:
+            self._video_last_frame = packet.frame
+            return True
+
+        # A prolonged camera disconnect must not cause an unbounded catch-up
+        # loop.  Preserve normal gaps (including the 10-second auto-stop
+        # window), but start a fresh timing baseline after a larger outage.
+        max_catch_up_frames = max(1, int(round(fps * 10.0)))
+        if frames_due > max_catch_up_frames:
+            self._video_timeline_start_ms = packet.ts_ms
+            self._video_frames_written = 0
+            frames_due = 1
+
+        fill_frame = self._video_last_frame if self._video_last_frame is not None else packet.frame
+        for _ in range(frames_due - 1):
+            writer.write(fill_frame)
+        writer.write(packet.frame)
+        self._video_frames_written += frames_due
+        self._video_last_frame = packet.frame
+        return True
 
     def _create_video_writer(
         self,
@@ -680,11 +818,17 @@ class VideoAnalyticsPipeline:
         if self._video_writer is not None:
             self._video_writer.release()
         self._video_writer = None
+        self._video_writer_fps = 0.0
+        self._video_timeline_start_ms = None
+        self._video_frames_written = 0
+        self._video_last_frame = None
         self._video_temp_path = None
         self._video_writer_segment_start = None
         self._video_writer_path = None
         self._local_recording_current_file = ""
-        if self._local_recording_enabled and self.is_running():
+        if self._recording_mode == "auto":
+            self._local_recording_status = "waiting"
+        elif self._local_recording_enabled and self.is_running():
             self._local_recording_status = "waiting"
         elif not self._local_recording_enabled:
             self._local_recording_status = "disabled"
@@ -1034,10 +1178,49 @@ class VideoAnalyticsPipeline:
                     stale_pending_track_ids.append(track_id)
             for track_id in stale_pending_track_ids:
                 del self._pending_by_track_id[track_id]
+            self._update_auto_recording_presence(len(self._presence_by_track_id))
         for state in self._presence_by_track_id.values():
             self._finalize_presence(track_id=-1, state=state, left_ms=state.last_seen_ms)
         self._presence_by_track_id.clear()
         self._pending_by_track_id.clear()
+        self._update_auto_recording_presence(0)
+
+    def _update_auto_recording_presence(self, presence_count: int) -> None:
+        with self._recording_state_lock:
+            self._stable_presence_count = presence_count
+            if self._recording_mode != "auto":
+                return
+            if presence_count > 0:
+                self._auto_stop_deadline = None
+                if not self._recording_active:
+                    self._recording_active = True
+                    self._local_recording_enabled = True
+                    self._recording_triggered_by = "person"
+                    self._local_recording_status = "starting"
+                    self._preroll_pending = True
+            elif self._recording_active and self._auto_stop_deadline is None:
+                self._auto_stop_deadline = time.monotonic() + self._auto_stop_delay_seconds
+
+    def _refresh_auto_recording_state(self) -> None:
+        should_close = False
+        with self._recording_state_lock:
+            if (
+                self._recording_mode == "auto"
+                and self._recording_active
+                and self._auto_stop_deadline is not None
+                and time.monotonic() >= self._auto_stop_deadline
+            ):
+                self._recording_active = False
+                self._local_recording_enabled = False
+                self._recording_triggered_by = "none"
+                self._local_recording_status = "waiting"
+                self._auto_stop_deadline = None
+                should_close = True
+        if should_close:
+            with self._recording_lock:
+                self._close_audio_writer(finalize=True)
+                self._close_video_writer()
+            self._unsubscribe_audio()
 
     def _activate_visit_for_track(self, track_id: int, person_id: str, ts_ms: int) -> tuple[int, bool]:
         recent = self._recently_closed_by_person_id.get(person_id)

@@ -487,7 +487,15 @@
     .section-title { margin:0 0 14px; font-size:20px; }
     .video-frame { background:#111; border:1px solid #d9dce2; border-radius:10px; overflow:hidden; box-shadow:0 1px 2px rgba(15,23,42,.04); }
     #stream-container { border-radius:0!important; border:0!important; min-height:0; aspect-ratio:16/9; background:#111; }
-    #stream { box-shadow:none; }
+    #stream { box-shadow:none; opacity:0; transition:opacity .22s ease; }
+    #stream-container.stream-ready #stream { opacity:1; }
+    .stream-loading { position:absolute; inset:0; z-index:12; display:grid; place-items:center; background:#f4f5f7; color:#555d68; text-align:center; }
+    .stream-loading[hidden] { display:none; }
+    .stream-loading-content { display:grid; gap:10px; justify-items:center; }
+    .stream-loading-ring { width:28px; height:28px; border:3px solid #d9dce3; border-top-color:#4f46e5; border-radius:50%; animation:stream-spin .8s linear infinite; }
+    .stream-loading strong { color:#292d35; font-size:15px; }
+    .stream-loading small { color:#7a818c; font-size:12px; }
+    @keyframes stream-spin { to { transform:rotate(360deg); } }
     .camera-toolbar { height:72px; display:flex; align-items:center; gap:8px; padding:0 16px; background:#fff; border-top:1px solid #e2e4e8; }
     .tool-btn { display:inline-flex; align-items:center; gap:8px; color:#272b33; background:transparent; border:0; border-radius:7px; padding:10px 12px; box-shadow:none; }
     .tool-btn:hover { background:#f0f1f4; }
@@ -510,6 +518,7 @@
     .activity-icon.warn { color:#a66500; background:#fff3dc; }
     .activity-copy strong { display:block; font-size:15px; }
     .activity-copy small { color:#7a818c; }
+    .activity-empty { padding:34px 4px; color:#858c96; text-align:center; border-top:1px solid #dfe2e7; font-size:13px; }
     .settings-panel,.roi-section { margin-top:22px; padding:18px; background:#fff; border:1px solid #e0e2e7; border-radius:9px; }
     .settings-grid { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
     .settings-grid label { display:grid; gap:6px; font-size:12px; color:#69707d; }
@@ -542,8 +551,8 @@
         <section class="monitor-column">
           <h2 class="section-title">实时画面</h2>
           <div class="video-frame">
-            <div id="stream-container" style="position:relative;overflow:hidden"><div id="stream-wrapper" style="position:absolute;top:0;left:0;transform-origin:0 0;transition:transform .05s linear"><img id="stream" src="/stream" alt="实时监控画面" style="border:0;border-radius:0;margin:0;display:block;width:100%;height:100%"><div id="roi-layer" style="position:absolute;inset:0;cursor:grab"></div></div></div>
-            <div class="camera-toolbar"><button id="record-toggle" type="button" class="tool-btn"><i class="bi bi-pause-fill"></i>录像</button><button id="sound-toggle" type="button" class="tool-btn"><i class="bi bi-volume-up"></i>声音</button><button id="roi-toggle" type="button" class="tool-btn"><i class="bi bi-bounding-box"></i>区域</button><button type="button" class="tool-btn" onclick="location.reload()"><i class="bi bi-arrow-clockwise"></i>刷新</button><span class="toolbar-spacer"></span><select class="quality-select" aria-label="画质"><option>高清</option><option>流畅</option></select></div>
+            <div id="stream-container" style="position:relative;overflow:hidden"><div id="stream-wrapper" style="position:absolute;top:0;left:0;transform-origin:0 0;transition:transform .05s linear"><img id="stream" src="/stream" alt="实时监控画面" style="border:0;border-radius:0;margin:0;display:block;width:100%;height:100%"><div id="roi-layer" style="position:absolute;inset:0;cursor:grab"></div></div><div id="stream-loading" class="stream-loading"><div class="stream-loading-content"><span class="stream-loading-ring" aria-hidden="true"></span><strong id="stream-loading-title">正在连接摄像头</strong><small id="stream-loading-detail">画面准备好后会自动显示</small></div></div></div>
+            <div class="camera-toolbar"><select id="record-toggle" class="quality-select" aria-label="录像模式"><option value="off">录像关闭</option><option value="auto">有人自动录制</option><option value="continuous">持续录制</option></select><button id="sound-toggle" type="button" class="tool-btn"><i class="bi bi-volume-up"></i>声音</button><button id="roi-toggle" type="button" class="tool-btn"><i class="bi bi-bounding-box"></i>区域</button><button type="button" class="tool-btn" onclick="location.reload()"><i class="bi bi-arrow-clockwise"></i>刷新</button><span class="toolbar-spacer"></span><select class="quality-select" aria-label="画质"><option>高清</option><option>流畅</option></select></div>
           </div>
           <p id="stream-error" style="color:#d9363e;margin:10px 0 0;font-size:13px"></p>
           <div class="metric-strip"><div class="metric"><span>当前在场</span><strong id="targets" class="primary">--</strong></div><div class="metric"><span>录像</span><strong>已开启</strong></div><div class="metric"><span>帧率</span><strong id="fps">--</strong></div><div class="metric"><span>延迟</span><strong id="latency">--</strong></div><div class="metric"><span>GPU</span><strong id="gpu">--</strong></div><div class="metric"><span>设备</span><strong id="capture-status">--</strong><span id="capture-backend" style="display:none">--</span></div></div>
@@ -551,7 +560,7 @@
           <section id="camera-settings" class="settings-panel"><h2 class="section-title" style="font-size:16px">摄像头设置</h2><div class="settings-grid"><label>分辨率<select id="cam-res"><option value="640x480">480p</option><option value="1280x720">720p</option><option value="1920x1080">1080p</option><option value="2560x1440">1440p</option><option value="3840x2160" selected>4K</option></select></label><label>目标帧率<select id="cam-fps"><option value="5">5 FPS</option><option value="15">15 FPS</option><option value="30" selected>30 FPS</option><option value="60">60 FPS</option></select></label><button id="cam-apply" type="button">应用设置</button></div><p id="cam-msg" class="status-copy"></p></section>
           <section class="roi-section"><h2>区域检测参数</h2><div id="roi-configs" class="roi-configs"></div></section>
         </section>
-        <aside class="activity-column"><div class="activity-head"><h2 class="section-title">今天动态</h2><span class="activity-date">2026-07-12 <i class="bi bi-chevron-down"></i></span></div><div class="activity-list"><div class="activity-row"><span class="activity-time">10:32:31</span><span class="activity-icon"><i class="bi bi-person-dash"></i></span><span class="activity-copy"><strong>人员离开</strong><small>1号出入口 · 通道 1</small></span></div><div class="activity-row"><span class="activity-time">10:31:58</span><span class="activity-icon"><i class="bi bi-person-plus"></i></span><span class="activity-copy"><strong>人员进入</strong><small>1号出入口 · 通道 1</small></span></div><div class="activity-row"><span class="activity-time">10:28:42</span><span class="activity-icon warn"><i class="bi bi-box-seam"></i></span><span class="activity-copy"><strong>物品移动</strong><small>西侧区域</small></span></div><div class="activity-row"><span class="activity-time">10:15:33</span><span class="activity-icon warn"><i class="bi bi-bell"></i></span><span class="activity-copy"><strong>区域逗留提醒</strong><small>东侧区域</small></span></div><div class="activity-row"><span class="activity-time">10:05:12</span><span class="activity-icon"><i class="bi bi-shield-check"></i></span><span class="activity-copy"><strong>系统自检完成</strong><small>所有设备正常</small></span></div></div></aside>
+        <aside class="activity-column"><div class="activity-head"><h2 class="section-title">今天动态</h2><span id="activity-date" class="activity-date">--</span></div><div id="activity-list" class="activity-list"><div class="activity-empty">正在加载实际记录...</div></div></aside>
       </div>
     </main>
   </div>
@@ -573,6 +582,9 @@
 
     const streamImage = document.getElementById("stream");
     const streamError = document.getElementById("stream-error");
+    const streamLoading = document.getElementById("stream-loading");
+    const streamLoadingTitle = document.getElementById("stream-loading-title");
+    const streamLoadingDetail = document.getElementById("stream-loading-detail");
     streamImage.addEventListener("error", () => {
       streamError.innerText = "信号流丢失或加载失败，请确保后台识别服务运行正常且摄像头可用。";
     });
@@ -619,16 +631,14 @@
       }
     }
 
-    function updateRecordButtons(enabled, busy = false) {
-      const label = enabled ? "关闭录像" : "开启录像";
+    function updateRecordButtons(mode, busy = false) {
       if (recordToggle) {
-        recordToggle.textContent = label;
-        recordToggle.classList.toggle("active", enabled);
+        recordToggle.value = mode || "off";
         recordToggle.disabled = busy;
       }
       if (appRecordToggle) {
-        appRecordToggle.textContent = label;
-        appRecordToggle.classList.toggle("active", enabled);
+        appRecordToggle.textContent = mode === "continuous" ? "持续录像" : mode === "auto" ? "自动录像" : "录像关闭";
+        appRecordToggle.classList.toggle("active", mode !== "off");
         appRecordToggle.disabled = busy;
       }
     }
@@ -1003,10 +1013,75 @@
         cs.innerText = d.capture_status || "-";
         cs.style.color = d.capture_status === "running" ? "var(--accent)" : "#ef4444";
         document.getElementById("capture-backend").innerText = d.capture_backend || "-";
+        const ready = d.capture_status === "running";
+        streamContainer.classList.toggle("stream-ready", ready);
+        streamLoading.hidden = ready;
+        if (!ready) {
+          streamLoadingTitle.textContent = "正在连接摄像头";
+          streamLoadingDetail.textContent = d.capture_status && d.capture_status !== "waiting" ? `当前状态：${d.capture_status}` : "画面准备好后会自动显示";
+        }
       } catch (e) { }
     }
     setInterval(pullStats, 1000);
     pullStats();
+
+    function parseVisitTime(iso) {
+      if (!iso) return null;
+      const normalized = iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z";
+      const date = new Date(normalized);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function localDateKey(date) {
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    }
+
+    function localTimeText(date) {
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    function escapeActivityText(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+    }
+
+    async function loadTodayActivity() {
+      const list = document.getElementById("activity-list");
+      const dateLabel = document.getElementById("activity-date");
+      const now = new Date();
+      const today = localDateKey(now);
+      dateLabel.textContent = today;
+      try {
+        const response = await fetch("/api/visits?limit=200", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const visits = await response.json();
+        const events = [];
+        for (const visit of visits) {
+          const appeared = parseVisitTime(visit.appeared_at);
+          const left = parseVisitTime(visit.left_at);
+          if (appeared && localDateKey(appeared) === today) events.push({ type: "进入", time: appeared, personId: visit.person_id });
+          if (left && localDateKey(left) === today) events.push({ type: "离开", time: left, personId: visit.person_id });
+        }
+        events.sort((a, b) => b.time - a.time);
+        if (!events.length) {
+          list.innerHTML = '<div class="activity-empty">今天还没有人员活动记录</div>';
+          return;
+        }
+        list.innerHTML = events.slice(0, 10).map((event) => `
+          <div class="activity-row">
+            <span class="activity-time">${localTimeText(event.time)}</span>
+            <span class="activity-icon"><i class="bi ${event.type === "进入" ? "bi-person-plus" : "bi-person-dash"}"></i></span>
+            <span class="activity-copy"><strong>人员${event.type}</strong><small>${localTimeText(event.time)} · ${escapeActivityText(event.personId)}</small></span>
+          </div>
+        `).join("");
+      } catch (error) {
+        list.innerHTML = '<div class="activity-empty">实际动态加载失败，稍后自动重试</div>';
+      }
+    }
+
+    setInterval(loadTodayActivity, 3000);
+    loadTodayActivity();
     updateInteractionCursor();
 
     const camRes = document.getElementById("cam-res");
@@ -1015,16 +1090,26 @@
     const camMsg = document.getElementById("cam-msg");
 
     function updateRecordingInfo(d) {
-      const enabled = !!d.local_recording_enabled;
-      updateRecordButtons(enabled, false);
+      const mode = d.recording_mode || (d.local_recording_enabled ? "continuous" : "off");
+      updateRecordButtons(mode, false);
       if (!recordStatus) return;
-      if (!d.local_recording_enabled) {
-        recordStatus.textContent = "本地录像已关闭。";
+      if (mode === "off") {
+        recordStatus.textContent = "录像已关闭";
         recordStatus.style.color = "var(--text-muted)";
         return;
       }
+      if (mode === "auto" && !d.recording_active) {
+        recordStatus.textContent = "自动 · 等待人员";
+        recordStatus.style.color = "var(--text-muted)";
+        return;
+      }
+      if (mode === "auto" && d.auto_stop_remaining_ms > 0) {
+        recordStatus.textContent = `无人，${Math.ceil(d.auto_stop_remaining_ms / 1000)} 秒后停止`;
+        recordStatus.style.color = "#a66500";
+        return;
+      }
       const currentFile = d.local_recording_current_file || "等待首个录像分片生成";
-      recordStatus.textContent = `本地录像: ${d.local_recording_status || "-"} | 当前文件: ${currentFile}`;
+      recordStatus.textContent = `${mode === "auto" ? "自动 · 正在录像" : "持续录像中"} | 当前文件: ${currentFile}`;
       recordStatus.style.color = d.local_recording_status === "recording" ? "var(--accent)" : "var(--text-muted)";
     }
 
@@ -1067,33 +1152,32 @@
       camApply.textContent = "应用";
     });
 
-    async function toggleLocalRecording() {
-      const enabled = !(recordToggle && recordToggle.classList.contains("active"));
-      updateRecordButtons(enabled, true);
+    async function changeRecordingMode() {
+      const mode = recordToggle ? recordToggle.value : "off";
+      updateRecordButtons(mode, true);
       try {
-        const res = await fetch("/api/local_recording", {
+        const res = await fetch("/api/recording_mode", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ enabled })
+          body: JSON.stringify({ mode })
         });
         const d = await res.json();
         updateRecordingInfo(d);
       } catch (e) {
-        updateRecordButtons(!enabled, false);
+        await loadCamSettings();
         if (recordStatus) {
-          recordStatus.textContent = "录像开关切换失败";
+          recordStatus.textContent = "录像模式切换失败";
           recordStatus.style.color = "#ef4444";
         }
       }
     }
 
-    if (recordToggle) recordToggle.addEventListener("click", toggleLocalRecording);
-    if (appRecordToggle) appRecordToggle.addEventListener("click", toggleLocalRecording);
+    if (recordToggle) recordToggle.addEventListener("change", changeRecordingMode);
 
     loadCamSettings();
     setInterval(loadCamSettings, 5000);
     updateSoundButtons();
-    updateRecordButtons(false);
+    updateRecordButtons("off");
   </script>
 </body>
 

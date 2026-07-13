@@ -5,6 +5,7 @@ import hashlib
 import queue
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -259,6 +260,10 @@ class LocalRecordingPayload(BaseModel):
     enabled: bool
 
 
+class RecordingModePayload(BaseModel):
+    mode: Literal["off", "auto", "continuous"]
+
+
 @router.post("/camera_settings")
 def update_camera_settings(payload: CameraSettingsPayload) -> dict:
     return services.pipeline.apply_camera_settings(payload.width, payload.height, payload.fps)
@@ -267,6 +272,11 @@ def update_camera_settings(payload: CameraSettingsPayload) -> dict:
 @router.post("/local_recording")
 def update_local_recording(payload: LocalRecordingPayload) -> dict:
     return services.pipeline.set_local_recording_enabled(payload.enabled)
+
+
+@router.post("/recording_mode")
+def update_recording_mode(payload: RecordingModePayload) -> dict:
+    return services.pipeline.set_recording_mode(payload.mode)
 
 
 @router.get("/reports/daily")

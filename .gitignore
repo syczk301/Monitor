@@ -10,6 +10,8 @@ data/*.sqlite
 data/*.log
 data/*.pid
 data/playback_cache/
+data/recording_settings.json
+data/recording_settings.tmp
 output/playwright/
 .playwright-cli/
 yolov8n.pt

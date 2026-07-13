@@ -146,6 +146,7 @@ def test_release_keeps_pipeline_alive_when_local_recording_enabled(monkeypatch) 
 
     repo = _FakeRepository()
     pipeline = pipeline_module.VideoAnalyticsPipeline(repository=repo, identity_store=repo, stream_source="0")
+    pipeline._recording_mode = "continuous"
     pipeline._local_recording_enabled = True
     pipeline._client_count = 1
 
@@ -153,6 +154,63 @@ def test_release_keeps_pipeline_alive_when_local_recording_enabled(monkeypatch) 
 
     assert pipeline._client_count == 0
     assert pipeline._idle_timer is None
+
+
+def test_auto_recording_starts_for_stable_presence_and_stops_after_deadline(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=_FakeRepository(), stream_source="0")
+    pipeline._recording_mode = "auto"
+    pipeline._recording_active = False
+    pipeline._local_recording_enabled = False
+
+    pipeline._update_auto_recording_presence(2)
+    assert pipeline._recording_active is True
+    assert pipeline._local_recording_enabled is True
+    assert pipeline._recording_triggered_by == "person"
+    assert pipeline._preroll_pending is True
+
+    pipeline._update_auto_recording_presence(0)
+    assert pipeline._auto_stop_deadline is not None
+    pipeline._auto_stop_deadline = time.monotonic() - 0.01
+    monkeypatch.setattr(pipeline, "_close_audio_writer", lambda finalize=True: None)
+    monkeypatch.setattr(pipeline, "_close_video_writer", lambda: None)
+    monkeypatch.setattr(pipeline, "_unsubscribe_audio", lambda: None)
+    pipeline._refresh_auto_recording_state()
+    assert pipeline._recording_active is False
+    assert pipeline._local_recording_enabled is False
+
+
+def test_preroll_buffer_keeps_only_last_three_seconds(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=_FakeRepository(), stream_source="0")
+    pipeline._recording_mode = "auto"
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+    for ts_ms in (0, 1000, 2000, 3000, 4000):
+        pipeline._remember_preroll_frame(ts_ms, frame)
+    assert [ts for ts, _ in pipeline._preroll_frames] == [1000, 2000, 3000, 4000]
+
+
+def test_recording_mode_is_persisted(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=_FakeRepository(), stream_source="0")
+    pipeline._recording_settings_path = tmp_path / "recording_settings.json"
+    pipeline._client_count = 1
+    monkeypatch.setattr(pipeline, "start", lambda: None)
+    result = pipeline.set_recording_mode("auto")
+    assert result["recording_mode"] == "auto"
+    assert '"auto"' in pipeline._recording_settings_path.read_text(encoding="utf-8")
 
 
 def test_cleanup_expired_recordings_keeps_recent_segment_window(monkeypatch, tmp_path) -> None:
@@ -273,6 +331,36 @@ def test_prepare_recording_frame_keeps_smaller_input(monkeypatch) -> None:
     resized = pipeline_module.VideoAnalyticsPipeline._prepare_recording_frame(frame)
 
     assert resized.shape[:2] == (720, 1280)
+
+
+def test_video_writer_uses_packet_timestamps_to_preserve_duration(monkeypatch) -> None:
+    monkeypatch.setattr(pipeline_module, "PersonDetector", _Dummy)
+    monkeypatch.setattr(pipeline_module, "MultiObjectTracker", _Dummy)
+    monkeypatch.setattr(pipeline_module, "PersonEmbeddingEngine", _Dummy)
+    monkeypatch.setattr(pipeline_module, "ReIDRegistry", _Dummy)
+    monkeypatch.setattr(pipeline_module, "TemporalIdentityMemory", _Dummy)
+
+    class _Writer:
+        def __init__(self) -> None:
+            self.frames: list[np.ndarray] = []
+
+        def write(self, frame: np.ndarray) -> None:
+            self.frames.append(frame.copy())
+
+    pipeline = pipeline_module.VideoAnalyticsPipeline(repository=_FakeRepository(), stream_source="0")
+    writer = _Writer()
+    pipeline._video_writer = writer
+    pipeline._video_writer_fps = 30.0
+    pipeline._video_timeline_start_ms = 1_000
+    monkeypatch.setattr(pipeline, "_ensure_video_writer", lambda packet: writer)
+
+    for frame_id, ts_ms in enumerate((1_000, 1_100, 1_200), start=1):
+        frame = np.full((8, 8, 3), frame_id, dtype=np.uint8)
+        packet = pipeline_module.FramePacket(frame_id=frame_id, ts_ms=ts_ms, frame=frame)
+        assert pipeline._write_video_packet(packet) is True
+
+    assert len(writer.frames) == 7
+    assert int(writer.frames[-1][0, 0, 0]) == 3
 
 
 def test_segment_basename_uses_readable_format(monkeypatch) -> None:
