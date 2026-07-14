@@ -38,13 +38,13 @@ class Settings(BaseModel):
     stream_source: str = "0"
     max_latency_ms: int = 500
     dedupe_window_seconds: int = 300
-    reid_similarity_threshold: float = 0.32
-    reid_recent_similarity_threshold: float = 0.55
+    reid_similarity_threshold: float = 0.70
+    reid_recent_similarity_threshold: float = 0.74
     reid_recent_window_ms: int = 10_000
     reid_recent_distance_px: int = 280
     reid_persist_interval_seconds: int = 5
-    visit_create_min_seen_frames: int = 3
-    visit_create_min_duration_ms: int = 600
+    visit_create_min_seen_frames: int = 5
+    visit_create_min_duration_ms: int = 1000
     visit_merge_window_ms: int = 12_000
     visit_discard_under_seconds: float = 1.2
     use_mongodb_storage: bool = _env_flag("USE_MONGODB_STORAGE", default=False)
@@ -53,15 +53,24 @@ class Settings(BaseModel):
     mongodb_database: str = os.getenv("MONGODB_DATABASE", "camera_monitor")
     mongodb_identity_collection: str = os.getenv("MONGODB_IDENTITY_COLLECTION", "identity_templates")
     detector_model: str = os.getenv("DETECTOR_MODEL", "yolo26s.pt")
-    detector_confidence: float = 0.50
+    detector_confidence: float = 0.60
     detector_iou: float = 0.45
+    detector_imgsz: int = 960
+    detector_furniture_classes: tuple[int, ...] = (56, 57)
+    detector_furniture_overlap_threshold: float = 0.72
+    detector_furniture_score_ratio: float = 1.10
+    detector_static_new_track_confidence: float = 0.84
+    inference_cpu_threads: int = 2
+    inference_device: str = os.getenv("INFERENCE_DEVICE", "cpu").strip().lower()
     auto_roi_enabled: bool = _env_flag("AUTO_ROI_ENABLED", default=True)
-    auto_roi_detector_confidence: float = 0.14
+    motion_analysis_max_width: int = 640
+    auto_roi_detector_confidence: float = 0.35
     auto_roi_detector_imgsz: int = 1280
     auto_roi_upscale_factor: float = 3.6
     auto_roi_enhanced_upscale_factor: float = 4.4
     auto_roi_memory_ms: int = 12_000
-    auto_roi_min_detection_confidence: float = 0.34
+    auto_roi_scan_interval_ms: int = 800
+    auto_roi_min_detection_confidence: float = 0.50
     auto_roi_use_scene_windows: bool = _env_flag("AUTO_ROI_USE_SCENE_WINDOWS", default=False)
     auto_roi_band_top_ratio: float = 0.22
     auto_roi_band_bottom_ratio: float = 0.92
@@ -72,7 +81,7 @@ class Settings(BaseModel):
     auto_roi_sliding_window_max_windows: int = 2
     auto_roi_min_area_ratio: float = 0.004
     auto_roi_overlap_threshold: float = 0.38
-    roi_detector_confidence: float = 0.18
+    roi_detector_confidence: float = 0.35
     roi_detector_imgsz: int = 960
     roi_expand_ratio: float = 0.35
     roi_upscale_factor: float = 3.0
@@ -87,13 +96,13 @@ class Settings(BaseModel):
     roi_occupancy_similarity_threshold: float = 0.90
     roi_empty_feature_distance_threshold: float = 0.11
     roi_feature_update_alpha: float = 0.18
-    tracker_high_confidence: float = 0.5
-    tracker_low_confidence: float = 0.12
-    tracker_new_track_confidence: float = 0.55
+    tracker_high_confidence: float = 0.55
+    tracker_low_confidence: float = 0.24
+    tracker_new_track_confidence: float = 0.65
     tracker_match_iou_threshold: float = 0.28
     tracker_low_conf_iou_threshold: float = 0.16
     tracker_display_max_missed: int = 3
-    tracker_min_confirmed_hits: int = 2
+    tracker_min_confirmed_hits: int = 4
     camera_width: int = int(os.getenv("CAMERA_WIDTH", "3840"))
     camera_height: int = int(os.getenv("CAMERA_HEIGHT", "2160"))
     mjpeg_quality: int = int(os.getenv("MJPEG_QUALITY", "85"))
@@ -108,7 +117,7 @@ class Settings(BaseModel):
     audio_block_frames: int = int(os.getenv("AUDIO_BLOCK_FRAMES", "2048"))
     frame_queue_size: int = 1
     result_queue_size: int = 32
-    feature_dim: int = Field(default=128, ge=64, le=512)
+    feature_dim: int = Field(default=512, ge=64, le=512)
     gpu_max_utilization: int = 70
 
 

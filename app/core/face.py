@@ -20,6 +20,8 @@ from app.core.osnet import load_osnet
 
 
 def _cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
+    if vec1.shape != vec2.shape:
+        return -1.0
     den = float(np.linalg.norm(vec1) * np.linalg.norm(vec2))
     if den == 0:
         return 0.0
@@ -44,7 +46,8 @@ class RecentIdentitySample:
 
 class PersonEmbeddingEngine:
     def __init__(self) -> None:
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        use_cuda = settings.inference_device in {"cuda", "gpu"} and torch.cuda.is_available()
+        self.device = "cuda" if use_cuda else "cpu"
         self._model = None
         self.transform = None
 
@@ -81,12 +84,41 @@ class PersonEmbeddingEngine:
         with torch.no_grad():
             feat = self._model(input_tensor).cpu().numpy().flatten()
 
-        dim = settings.feature_dim
-        split = max(32, int(dim * 0.7))
-        deep = self._resize_feature(feat, split)
-        hand = self._resize_feature(handcrafted, dim - split)
-        merged = np.concatenate((deep * 0.9, hand * 0.1))
-        return _normalize_feature(merged)
+        # OSNet is trained in its native 512-dimensional embedding space.
+        # Interpolating that vector down to a smaller dimension changes the
+        # learned geometry and makes unrelated people look artificially close.
+        deep = _normalize_feature(feat)
+        if deep.size == settings.feature_dim:
+            return deep
+        return self._resize_feature(deep, settings.feature_dim)
+
+    @staticmethod
+    def crop_quality_score(frame: np.ndarray, bbox: tuple[int, int, int, int]) -> float:
+        x1, y1, x2, y2 = bbox
+        fh, fw = frame.shape[:2]
+        x1 = max(0, min(x1, fw - 1))
+        y1 = max(0, min(y1, fh - 1))
+        x2 = max(1, min(x2, fw))
+        y2 = max(1, min(y2, fh))
+        width = x2 - x1
+        height = y2 - y1
+        if width < 24 or height < 64 or height <= 0:
+            return 0.0
+        aspect_ratio = width / height
+        if aspect_ratio < 0.18 or aspect_ratio > 1.05:
+            return 0.0
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return 0.0
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        mean_brightness = float(gray.mean())
+        if mean_brightness < 12.0 or mean_brightness > 248.0:
+            return 0.0
+        size_score = min(1.0, height / max(96.0, fh * 0.15))
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        sharpness_score = min(1.0, sharpness / 80.0)
+        exposure_score = 1.0 if 28.0 <= mean_brightness <= 232.0 else 0.5
+        return size_score * 0.5 + sharpness_score * 0.3 + exposure_score * 0.2
 
     @staticmethod
     def _resize_feature(vec: np.ndarray, target_dim: int) -> np.ndarray:
@@ -160,7 +192,8 @@ class ReIDRegistry:
     def resolve_person_id(self, feature: np.ndarray) -> str:
         best_id, best_score = self.match_person_id(feature)
         if best_id and best_score >= self.threshold:
-            self._add_template(best_id, feature)
+            if best_score >= max(0.82, self.threshold + 0.08):
+                self._add_template(best_id, feature)
             return best_id
         new_id = self._create_person_id(feature)
         self._store[new_id] = [feature.copy()]
@@ -184,7 +217,10 @@ class ReIDRegistry:
 
     def update_feature(self, person_id: str, feature: np.ndarray) -> None:
         if person_id in self._store:
-            self._add_template(person_id, feature)
+            templates = self._store[person_id]
+            best_score = max((_cosine_similarity(feature, tmpl) for tmpl in templates), default=-1.0)
+            if best_score >= max(0.82, self.threshold + 0.08):
+                self._add_template(person_id, feature)
 
     def load_templates(self, templates_by_person: dict[str, list[np.ndarray]]) -> None:
         self._store = {

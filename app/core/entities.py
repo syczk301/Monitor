@@ -11,6 +11,8 @@ class Detection:
     bbox: tuple[int, int, int, int]
     confidence: float
     class_id: int
+    source: str = "model"
+    can_start_track: bool = True
 
 
 @dataclass(slots=True)
@@ -22,6 +24,8 @@ class TrackedObject:
     trajectory: list[tuple[int, int]] = field(default_factory=list)
     feature: np.ndarray | None = None
     person_id: str | None = None
+    detection_confidence: float = 0.0
+    detection_source: str = "model"
 
 
 @dataclass(slots=True)

@@ -25,13 +25,25 @@ class AutoFocusState:
 class PersonDetector:
     def __init__(self) -> None:
         self._model: Any | None = None
+        self._last_auto_roi_scan_ms = -settings.auto_roi_scan_interval_ms
         try:
+            import torch
+
+            cv2.setNumThreads(max(1, settings.inference_cpu_threads))
+            torch.set_num_threads(max(1, settings.inference_cpu_threads))
+            try:
+                torch.set_num_interop_threads(1)
+            except RuntimeError:
+                pass
+
             from ultralytics import YOLO
 
             self._model = YOLO(settings.detector_model)
-            import torch
-            if torch.cuda.is_available():
+            use_cuda = settings.inference_device in {"cuda", "gpu"} and torch.cuda.is_available()
+            if use_cuda:
                 self._model.to("cuda")
+            else:
+                self._model.to("cpu")
         except Exception:
             self._model = None
         self._hog = cv2.HOGDescriptor()
@@ -68,22 +80,54 @@ class PersonDetector:
 
         all_boxes = []
         all_confs = []
+        all_sources: list[str] = []
+        all_can_start: list[bool] = []
         roi_direct_hits: dict[int, list[tuple[tuple[int, int, int, int], float]]] = {}
         scan_rois = list(rois)
 
+        motion_boxes: list[tuple[int, int, int, int]] = []
+        if settings.auto_roi_enabled:
+            motion_boxes = self._motion_candidates(frame)
+            self._update_auto_focus_states(motion_boxes, current_ts_ms)
+
         # 1. 广视角全画幅扫描
         res = self._model.predict(
-            frame, conf=settings.detector_confidence, iou=settings.detector_iou, classes=[0], imgsz=640, verbose=False
+            frame,
+            conf=min(0.35, settings.detector_confidence),
+            iou=settings.detector_iou,
+            classes=[0, *settings.detector_furniture_classes],
+            imgsz=settings.detector_imgsz,
+            verbose=False,
         )
+        full_people: list[tuple[tuple[int, int, int, int], float]] = []
+        full_furniture: list[tuple[tuple[int, int, int, int], float]] = []
         if res and res[0].boxes is not None:
-            for xyxy, conf in zip(res[0].boxes.xyxy, res[0].boxes.conf, strict=False):
+            classes = res[0].boxes.cls
+            for xyxy, conf, class_id in zip(res[0].boxes.xyxy, res[0].boxes.conf, classes, strict=False):
                 x1, y1, x2, y2 = [int(v) for v in xyxy.tolist()]
-                all_boxes.append([x1, y1, x2 - x1, y2 - y1])
-                all_confs.append(float(conf.item()))
+                candidate = ((x1, y1, x2, y2), float(conf.item()))
+                if int(class_id.item()) == 0:
+                    if candidate[1] >= settings.detector_confidence and self._passes_person_geometry_filter(
+                        candidate[0], frame_shape=frame.shape[:2]
+                    ):
+                        full_people.append(candidate)
+                else:
+                    full_furniture.append(candidate)
+        for bbox, confidence in self._suppress_furniture_conflicts(full_people, full_furniture):
+            x1, y1, x2, y2 = bbox
+            all_boxes.append([x1, y1, x2 - x1, y2 - y1])
+            all_confs.append(confidence)
+            all_sources.append("full")
+            all_can_start.append(self._can_start_person_track(bbox, confidence, current_ts_ms))
 
         # 2. 自动候选区域补扫，不再强依赖手动 ROI
-        if settings.auto_roi_enabled:
-            scan_rois.extend(self._auto_focus_rois(frame, rois, current_ts_ms))
+        should_scan_auto_rois = (
+            settings.auto_roi_enabled
+            and current_ts_ms - self._last_auto_roi_scan_ms >= settings.auto_roi_scan_interval_ms
+        )
+        if should_scan_auto_rois:
+            scan_rois.extend(self._auto_focus_rois(frame, rois, current_ts_ms, motion_boxes=motion_boxes))
+            self._last_auto_roi_scan_ms = current_ts_ms
 
         # 3. ROI / 自动候选区域局部增强扫描
         for roi in scan_rois:
@@ -94,6 +138,8 @@ class PersonDetector:
                 x1, y1, x2, y2 = mapped_box
                 all_boxes.append([x1, y1, x2 - x1, y2 - y1])
                 all_confs.append(mapped_conf)
+                all_sources.append("auto_roi" if roi.get("auto") else "roi")
+                all_can_start.append(self._can_start_person_track(mapped_box, mapped_conf, current_ts_ms))
                 local_hits.append((mapped_box, mapped_conf))
             if roi_id:
                 roi_direct_hits[roi_id] = local_hits
@@ -105,13 +151,21 @@ class PersonDetector:
         # 4. 结果合并与去重 (NMS)
         indices = cv2.dnn.NMSBoxes(all_boxes, all_confs, score_threshold=0.1, nms_threshold=0.3)
         if len(indices) > 0:
-            for i in indices.flatten():
+            accepted_boxes: list[tuple[int, int, int, int]] = []
+            ordered_indices = sorted(indices.flatten(), key=lambda idx: all_confs[idx], reverse=True)
+            for i in ordered_indices:
                 x, y, w, h = all_boxes[i]
+                bbox = (x, y, x + w, y + h)
+                if self._overlaps_existing_person(bbox, accepted_boxes):
+                    continue
+                accepted_boxes.append(bbox)
                 detections.append(
                     Detection(
-                        bbox=(x, y, x + w, y + h),
+                        bbox=bbox,
                         confidence=all_confs[i],
                         class_id=0,
+                        source=all_sources[i],
+                        can_start_track=all_can_start[i],
                     )
                 )
         detections.extend(self._build_occupancy_fallbacks(frame, rois, detections, roi_direct_hits, current_ts_ms))
@@ -153,7 +207,7 @@ class PersonDetector:
             view_specs.extend(self._sliding_windows(upper_body_box, roi_params))
 
         detections: list[tuple[tuple[int, int, int, int], float]] = []
-        for sx1, sy1, sx2, sy2, upscale, enhance, conf_bonus, upper_body_preferred in view_specs:
+        for sx1, sy1, sx2, sy2, upscale, enhance, _conf_bonus, upper_body_preferred in view_specs:
             if sx2 <= sx1 or sy2 <= sy1:
                 continue
             crop = frame[sy1:sy2, sx1:sx2]
@@ -162,28 +216,40 @@ class PersonDetector:
             if enhance:
                 crop = self._enhance_crop(crop)
             ch, cw = crop.shape[:2]
-            target_w = max(cw + 1, int(cw * upscale))
-            target_h = max(ch + 1, int(ch * upscale))
-            upscaled = cv2.resize(crop, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+            max_model_side = int(roi_params["imgsz"])
+            effective_upscale = max(1.0, min(upscale, max_model_side / max(1, max(ch, cw))))
+            if effective_upscale > 1.01:
+                target_w = max(cw + 1, int(round(cw * effective_upscale)))
+                target_h = max(ch + 1, int(round(ch * effective_upscale)))
+                upscaled = cv2.resize(crop, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
+            else:
+                upscaled = crop
             c_res = self._model.predict(
                 upscaled,
                 conf=roi_params["confidence"],
                 iou=settings.detector_iou,
-                classes=[0],
+                classes=[0, *settings.detector_furniture_classes],
                 imgsz=roi_params["imgsz"],
                 verbose=False,
             )
+            view_people: list[tuple[tuple[int, int, int, int], float]] = []
+            view_furniture: list[tuple[tuple[int, int, int, int], float]] = []
             if c_res and c_res[0].boxes is not None:
-                for xyxy, conf in zip(c_res[0].boxes.xyxy, c_res[0].boxes.conf, strict=False):
+                classes = c_res[0].boxes.cls
+                for xyxy, conf, class_id in zip(c_res[0].boxes.xyxy, c_res[0].boxes.conf, classes, strict=False):
                     cx1, cy1, cx2, cy2 = [int(v) for v in xyxy.tolist()]
-                    fx1 = int(round(cx1 / upscale)) + sx1
-                    fy1 = int(round(cy1 / upscale)) + sy1
-                    fx2 = int(round(cx2 / upscale)) + sx1
-                    fy2 = int(round(cy2 / upscale)) + sy1
+                    fx1 = int(round(cx1 / effective_upscale)) + sx1
+                    fy1 = int(round(cy1 / effective_upscale)) + sy1
+                    fx2 = int(round(cx2 / effective_upscale)) + sx1
+                    fy2 = int(round(cy2 / effective_upscale)) + sy1
                     mapped = self._clip_bbox((fx1, fy1, fx2, fy2), frame_shape=(fh, fw))
+                    confidence = float(conf.item())
+                    if int(class_id.item()) != 0:
+                        view_furniture.append((mapped, confidence))
+                        continue
                     if upper_body_preferred:
                         mapped = self._upper_body_detection_bbox(mapped, focus_box=roi_box, frame_shape=(fh, fw))
-                    mapped_conf = min(0.99, float(conf.item()) + conf_bonus)
+                    mapped_conf = confidence
                     if is_auto and not self._passes_auto_detection_filter(
                         mapped,
                         roi_box=roi_box,
@@ -191,12 +257,10 @@ class PersonDetector:
                         confidence=mapped_conf,
                     ):
                         continue
-                    detections.append(
-                        (
-                            mapped,
-                            mapped_conf,
-                        )
-                    )
+                    if not self._passes_person_geometry_filter(mapped, frame_shape=(fh, fw)):
+                        continue
+                    view_people.append((mapped, mapped_conf))
+            detections.extend(self._suppress_furniture_conflicts(view_people, view_furniture))
         return detections
 
     def _build_occupancy_fallbacks(
@@ -257,6 +321,8 @@ class PersonDetector:
                         bbox=fallback_bbox,
                         confidence=0.24,
                         class_id=0,
+                        source="occupancy",
+                        can_start_track=False,
                     )
                 )
 
@@ -373,6 +439,7 @@ class PersonDetector:
         frame: np.ndarray,
         manual_rois: list[dict],
         ts_ms: int,
+        motion_boxes: list[tuple[int, int, int, int]] | None = None,
     ) -> list[dict]:
         fh, fw = frame.shape[:2]
         manual_boxes = [
@@ -380,8 +447,9 @@ class PersonDetector:
             for roi in manual_rois
             if roi.get("bbox")
         ]
-        motion_boxes = self._motion_candidates(frame)
-        self._update_auto_focus_states(motion_boxes, ts_ms)
+        if motion_boxes is None:
+            motion_boxes = self._motion_candidates(frame)
+            self._update_auto_focus_states(motion_boxes, ts_ms)
 
         candidates: list[tuple[float, tuple[int, int, int, int]]] = []
         for state in self._auto_focus_states:
@@ -442,9 +510,16 @@ class PersonDetector:
         frame: np.ndarray,
     ) -> list[tuple[int, int, int, int]]:
         fh, fw = frame.shape[:2]
-        band_top = int(fh * settings.auto_roi_band_top_ratio)
-        band_bottom = int(fh * settings.auto_roi_band_bottom_ratio)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        analysis_scale = min(1.0, settings.motion_analysis_max_width / max(1, fw))
+        analysis_w = max(1, int(round(fw * analysis_scale)))
+        analysis_h = max(1, int(round(fh * analysis_scale)))
+        if analysis_scale < 1.0:
+            analysis_frame = cv2.resize(frame, (analysis_w, analysis_h), interpolation=cv2.INTER_AREA)
+        else:
+            analysis_frame = frame
+        band_top = int(analysis_h * settings.auto_roi_band_top_ratio)
+        band_bottom = int(analysis_h * settings.auto_roi_band_bottom_ratio)
+        gray = cv2.cvtColor(analysis_frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
         fg_mask = self._bg_subtractor.apply(gray, learningRate=0.003)
         _, fg_mask = cv2.threshold(fg_mask, 210, 255, cv2.THRESH_BINARY)
@@ -458,7 +533,9 @@ class PersonDetector:
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel, iterations=1)
         fg_mask = cv2.dilate(fg_mask, kernel, iterations=2)
 
-        min_area = fh * fw * settings.auto_roi_min_area_ratio
+        min_area = analysis_h * analysis_w * settings.auto_roi_min_area_ratio
+        scale_x = fw / float(analysis_w)
+        scale_y = fh / float(analysis_h)
         candidates: list[tuple[int, int, int, int]] = []
         contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
@@ -466,7 +543,15 @@ class PersonDetector:
             if area < min_area:
                 continue
             x, y, w, h = cv2.boundingRect(contour)
-            bbox = self._clip_bbox((x, y, x + w, y + h), frame_shape=(fh, fw))
+            bbox = self._clip_bbox(
+                (
+                    int(round(x * scale_x)),
+                    int(round(y * scale_y)),
+                    int(round((x + w) * scale_x)),
+                    int(round((y + h) * scale_y)),
+                ),
+                frame_shape=(fh, fw),
+            )
             candidates.append(self._expand_bbox(bbox, frame_shape=(fh, fw)))
         return candidates
 
@@ -543,6 +628,76 @@ class PersonDetector:
             return False
         roi_coverage = PersonDetector._bbox_overlap_ratio(roi_box, bbox)
         return roi_coverage >= 0.7
+
+    @staticmethod
+    def _passes_person_geometry_filter(
+        bbox: tuple[int, int, int, int],
+        frame_shape: tuple[int, int],
+    ) -> bool:
+        fh, fw = frame_shape
+        x1, y1, x2, y2 = bbox
+        width = max(1, x2 - x1)
+        height = max(1, y2 - y1)
+        aspect_ratio = width / height
+        area_ratio = (width * height) / float(max(1, fw * fh))
+        if width < max(20, int(fw * 0.012)):
+            return False
+        if height < max(56, int(fh * 0.045)):
+            return False
+        if area_ratio < 0.0008:
+            return False
+        return 0.18 <= aspect_ratio <= 1.05
+
+    @staticmethod
+    def _suppress_furniture_conflicts(
+        people: list[tuple[tuple[int, int, int, int], float]],
+        furniture: list[tuple[tuple[int, int, int, int], float]],
+    ) -> list[tuple[tuple[int, int, int, int], float]]:
+        accepted: list[tuple[tuple[int, int, int, int], float]] = []
+        for person_bbox, person_confidence in people:
+            conflict = any(
+                PersonDetector._bbox_overlap_ratio(furniture_bbox, person_bbox)
+                >= settings.detector_furniture_overlap_threshold
+                and furniture_confidence >= person_confidence * settings.detector_furniture_score_ratio
+                for furniture_bbox, furniture_confidence in furniture
+            )
+            if not conflict:
+                accepted.append((person_bbox, person_confidence))
+        return accepted
+
+    @staticmethod
+    def _overlaps_existing_person(
+        bbox: tuple[int, int, int, int],
+        accepted_boxes: list[tuple[int, int, int, int]],
+    ) -> bool:
+        for existing in accepted_boxes:
+            if PersonDetector._bbox_iou(bbox, existing) >= 0.28:
+                return True
+            containment = max(
+                PersonDetector._bbox_overlap_ratio(bbox, existing),
+                PersonDetector._bbox_overlap_ratio(existing, bbox),
+            )
+            if containment >= 0.65:
+                return True
+        return False
+
+    def _can_start_person_track(
+        self,
+        bbox: tuple[int, int, int, int],
+        confidence: float,
+        ts_ms: int,
+    ) -> bool:
+        if confidence >= settings.detector_static_new_track_confidence:
+            return True
+        for state in self._auto_focus_states:
+            if ts_ms - state.last_motion_ms > settings.auto_roi_memory_ms:
+                continue
+            if (
+                self._bbox_iou(bbox, state.bbox) >= 0.08
+                or self._bbox_overlap_ratio(state.bbox, bbox) >= 0.12
+            ):
+                return True
+        return False
 
     @staticmethod
     def _merge_bboxes(

@@ -125,7 +125,7 @@ class MultiObjectTracker:
                 del self._tracks[track_id]
 
         for det in unmatched_high:
-            if det.confidence < self.new_track_confidence:
+            if det.confidence < self.new_track_confidence or not det.can_start_track:
                 continue
             self._create_track(det, now)
 
@@ -190,6 +190,8 @@ class MultiObjectTracker:
             state.missed = 0
             state.hits += 1
             state.last_detection_confidence = det.confidence
+            state.obj.detection_confidence = det.confidence
+            state.obj.detection_source = det.source
 
     def _create_track(self, det: Detection, now: datetime) -> None:
         cx, cy = _bbox_center(det.bbox)
@@ -201,6 +203,8 @@ class MultiObjectTracker:
             trajectory=[(int(round(cx)), int(round(cy)))],
             feature=None,
             person_id=None,
+            detection_confidence=det.confidence,
+            detection_source=det.source,
         )
         self._tracks[self._next_id] = TrackState(
             obj=obj,
@@ -218,10 +222,7 @@ class MultiObjectTracker:
         return _shift_bbox(state.obj.bbox, dx * prediction_scale, dy * prediction_scale)
 
     def _should_display(self, state: TrackState) -> bool:
-        return (
-            state.hits >= self.min_confirmed_hits
-            or state.last_detection_confidence >= self.new_track_confidence
-        )
+        return state.hits >= self.min_confirmed_hits
 
     @property
     def active_tracks(self) -> list[TrackedObject]:

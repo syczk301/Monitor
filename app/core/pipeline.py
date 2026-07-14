@@ -523,7 +523,14 @@ class VideoAnalyticsPipeline:
                 # Feature extraction only every 5 frames or for new tracks
                 do_reid = (frame_counter % 5 == 0)
                 for track in tracks:
-                    if do_reid or track.person_id is None:
+                    quality_score = self.face_engine.crop_quality_score(packet.frame, track.bbox)
+                    quality_required = 0.45 if track.person_id is None else 0.62
+                    can_extract_identity = (
+                        track.detection_source != "occupancy"
+                        and track.detection_confidence >= settings.tracker_high_confidence
+                        and quality_score >= quality_required
+                    )
+                    if (do_reid or track.person_id is None) and can_extract_identity:
                         feature = self.face_engine.embed_128d(packet.frame, track.bbox)
                         if feature is not None:
                             track.feature = feature

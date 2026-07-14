@@ -14,6 +14,8 @@ data/recording_settings.json
 data/recording_settings.tmp
 output/playwright/
 .playwright-cli/
+test-output/
+.test-runs/
 yolov8n.pt
 yolov8s.pt
 .env
