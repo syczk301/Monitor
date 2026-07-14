@@ -2,16 +2,13 @@
 
 当前仓库采用的安全方案是：
 
-- FastAPI 仅监听 `127.0.0.1:8000`
+- Rust 原生服务仅监听 `127.0.0.1:8000`
 - Caddy 仅监听 `127.0.0.1:8080`
 - Tailscale Serve 对 tailnet 成员暴露 HTTPS 入口
-- MongoDB 不对外开放端口
 
 ## 1. 启动后端
 
-```powershell
-.\scripts\start_local_uvicorn.ps1
-```
+启动 `windows-native\dist\CameraMonitor.exe`，或从开始菜单启动已安装的 Camera Monitor。托盘出现后可访问 `http://127.0.0.1:8000`。
 
 ## 2. 配置 Caddy 基础登录
 
@@ -28,7 +25,7 @@ $env:CADDY_BASIC_AUTH_USER="monitor_admin"
 $env:CADDY_BASIC_AUTH_HASH="上一步输出的哈希"
 ```
 
-也可以复制 `.env.example` 里的两个 Caddy 变量到本机的 `Caddy.local.env`，再由启动脚本读取。
+也可以把两个变量保存到本机的 `Caddy.local.env`，再由启动脚本读取。
 
 ## 3. 启动 Caddy
 
@@ -72,5 +69,4 @@ $env:CADDY_BASIC_AUTH_HASH="上一步输出的哈希"
 ## 6. 安全注意事项
 
 - 不要把 `CADDY_BASIC_AUTH_HASH` 明文提交到仓库
-- 不要在任何环境下对外开放 MongoDB `27017`
 - 当前项目没有应用内登录；外部访问必须依赖 Tailscale + Caddy 基础认证

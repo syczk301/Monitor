@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>录像查看 - 智能客流分析系统</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: rgba(30, 41, 59, 0.72);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --border: rgba(255, 255, 255, 0.08);
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: 'Inter', -apple-system, 'Helvetica Neue', sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      background-image: radial-gradient(circle at 0% 0%, #1e293b 0%, #0f172a 58%);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .header {
+      padding: 24px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.56);
+      backdrop-filter: blur(10px);
+    }
+
+    .header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+
+    .nav-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .nav-btn {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+      white-space: nowrap;
+    }
+
+    .nav-btn:hover { color: var(--text); }
+
+    .wrap {
+      max-width: 1480px;
+      margin: 28px auto;
+      padding: 0 28px 32px;
+      display: grid;
+      grid-template-columns: 420px minmax(0, 1fr);
+      gap: 24px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+      backdrop-filter: blur(12px);
+    }
+
+    .side-card {
+      padding: 20px;
+      max-height: calc(100vh - 150px);
+      overflow: auto;
+    }
+
+    .player-card {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .toolbar h2, .player-card h2 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    button {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 9px 14px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+
+    button:hover { background: rgba(255, 255, 255, 0.12); }
+
+    button.primary {
+      background: var(--primary);
+      border-color: transparent;
+      color: white;
+    }
+
+    button.primary:hover { background: var(--primary-hover); }
+
+    .record-day {
+      margin-bottom: 18px;
+    }
+
+    .record-day-title {
+      margin: 0 0 10px;
+      font-size: 0.82rem;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 700;
+    }
+
+    .record-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .record-item {
+      width: 100%;
+      text-align: left;
+      border-radius: 14px;
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.58);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .record-item.active {
+      border-color: rgba(59, 130, 246, 0.6);
+      background: rgba(59, 130, 246, 0.12);
+      box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.16) inset;
+    }
+
+    .record-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .record-name {
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .record-meta {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .video-wrap {
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: rgba(2, 6, 23, 0.82);
+    }
+
+    video {
+      width: 100%;
+      display: block;
+      max-height: 70vh;
+      background: #020617;
+    }
+
+    .player-meta {
+      display: grid;
+      gap: 6px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .player-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .empty {
+      padding: 32px 20px;
+      text-align: center;
+      color: var(--text-muted);
+      border: 1px dashed rgba(148, 163, 184, 0.25);
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.42);
+    }
+
+    @media (max-width: 980px) {
+      .wrap {
+        grid-template-columns: 1fr;
+        padding: 0 16px 24px;
+      }
+
+      .side-card {
+        max-height: none;
+      }
+
+      .header {
+        padding: 18px 16px;
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
+    /* Shared light monitoring shell */
+    :root { --bg:#f6f7f9; --card-bg:#fff; --text:#17191f; --text-muted:#6f7682; --primary:#4f46e5; --primary-hover:#4338ca; --border:#e1e3e8; }
+    body { font-family:'Microsoft YaHei UI','Segoe UI',sans-serif; background:#f6f7f9; background-image:none; color:var(--text); }
+    .shell { min-height:100vh; display:grid; grid-template-columns:128px minmax(0,1fr); }
+    .side-nav { position:sticky; top:0; height:100vh; background:#fff; border-right:1px solid #e1e3e8; display:flex; flex-direction:column; }
+    .brand { height:94px; display:flex; align-items:center; justify-content:center; background:#fbfbfc; border-bottom:1px solid #e7e9ed; color:#272b33; font-weight:700; font-size:16px; }
+    .side-link { color:#626975; text-decoration:none; padding:18px 16px; border-left:3px solid transparent; font-size:14px; }
+    .side-link:hover { background:#f6f6fa; color:#34303f; }
+    .side-link.active { color:#4338ca; background:#efefff; border-left-color:#5b51e8; font-weight:650; }
+    .side-bottom { margin-top:auto; border-top:1px solid #e7e9ed; }
+    .workspace { min-width:0; }
+    .header { height:94px; padding:0 30px; background:#fff; border-bottom:1px solid #e1e3e8; backdrop-filter:none; }
+    .header h1 { color:#17191f; font-size:24px; font-weight:700; }
+    .nav-btn { color:#4f46e5; }
+    .nav-btn:hover { color:#3730a3; }
+    .wrap { max-width:1600px; margin:0; padding:28px 30px 40px; grid-template-columns:360px minmax(0,1fr); gap:24px; }
+    .card { background:#fff; border:1px solid #e1e3e8; border-radius:10px; box-shadow:0 1px 2px rgba(15,23,42,.04); backdrop-filter:none; }
+    button { background:#fff; color:#30343c; border:1px solid #d8dbe2; border-radius:7px; }
+    button:hover { background:#f4f5f7; }
+    button.primary { background:#4f46e5; }
+    .record-day-title { color:#747b86; text-transform:none; letter-spacing:0; }
+    .record-item { background:#fff; border:1px solid #e1e3e8; border-radius:8px; }
+    .record-item:hover { background:#f7f7fa; }
+    .record-item.active { border-color:#8b84ee; background:#efefff; box-shadow:0 0 0 1px #d5d2ff inset; }
+    .record-name { color:#232730; }
+    .video-wrap { border-color:#dfe2e7; background:#111; border-radius:9px; }
+    .video-wrap video.is-preparing { visibility:hidden; height:0; }
+    .empty { background:#fafbfc; border-color:#d9dce3; color:#757c87; border-radius:8px; }
+    @media(max-width:980px){.shell{display:block}.side-nav{position:relative;height:auto;flex-direction:row;overflow-x:auto}.brand{height:64px;min-width:110px}.side-link{white-space:nowrap;padding:20px 12px}.side-bottom{margin:0}.header{height:auto;padding:18px 16px}.wrap{padding:18px 14px}}
+  </style>
+</head>
+
+<body>
+  <div class="shell">
+    <nav class="side-nav" aria-label="主导航">
+      <div class="brand">智能监控</div>
+      <a class="side-link" href="/">实时画面</a>
+      <a class="side-link" href="/history">历史记录</a>
+      <a class="side-link active" href="/recordings">录像回放</a>
+      <a class="side-link side-bottom" href="/#camera-settings">设备</a>
+    </nav>
+    <main class="workspace">
+  <div class="header">
+    <h1>录像查看</h1>
+    <div class="nav-row">
+      <a href="/" class="nav-btn">返回监控</a>
+      <a href="/history" class="nav-btn">历史记录</a>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="card side-card">
+      <div class="toolbar">
+        <h2>录像列表</h2>
+        <button class="primary" type="button" onclick="loadRecordings()">刷新</button>
+      </div>
+      <div id="recordings-view" class="empty">正在加载录像列表...</div>
+    </div>
+
+    <div class="card player-card">
+      <h2>播放预览</h2>
+      <div class="video-wrap">
+        <video id="player" controls preload="auto"></video>
+      </div>
+      <div id="player-empty" class="empty">选择左侧录像后开始播放。</div>
+      <div id="player-meta" class="player-meta" style="display:none;"></div>
+      <div id="player-actions" class="player-actions" style="display:none;">
+        <a id="player-open" class="nav-btn" href="#" target="_blank" rel="noopener noreferrer">新窗口打开</a>
+        <a id="player-download" class="nav-btn" href="#" download>下载文件</a>
+      </div>
+    </div>
+  </div>
+    </main>
+  </div>
+
+  <script>
+    let selectedPath = "";
+    const recordingIndex = new Map();
+
+    function formatTime(iso) {
+      if (!iso) return "-";
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso;
+      const p = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
+
+    function formatSize(size) {
+      if (!Number.isFinite(size)) return "-";
+      const units = ["B", "KB", "MB", "GB"];
+      let value = size;
+      let idx = 0;
+      while (value >= 1024 && idx < units.length - 1) {
+        value /= 1024;
+        idx += 1;
+      }
+      return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+    }
+
+    function recordingUrl(path, playback = false) {
+      const endpoint = playback ? "/api/recordings/playback" : "/api/recordings/file";
+      return `${endpoint}?path=${encodeURIComponent(path)}`;
+    }
+
+    function renderSelection(item) {
+      const player = document.getElementById("player");
+      const playerMeta = document.getElementById("player-meta");
+      const playerEmpty = document.getElementById("player-empty");
+      const playerActions = document.getElementById("player-actions");
+      const openLink = document.getElementById("player-open");
+      const downloadLink = document.getElementById("player-download");
+      const url = recordingUrl(item.relative_path, true);
+      const originalUrl = recordingUrl(item.relative_path);
+
+      selectedPath = item.relative_path;
+      player.classList.add("is-preparing");
+      playerEmpty.style.display = "block";
+      playerEmpty.textContent = "首次播放正在准备兼容版本，请稍候；完成后进度条将保持稳定。";
+      player.src = url;
+      player.load();
+      player.onloadeddata = () => {
+        player.classList.remove("is-preparing");
+        playerEmpty.style.display = "none";
+      };
+      player.onerror = () => {
+        player.classList.add("is-preparing");
+        playerEmpty.style.display = "block";
+        playerEmpty.textContent = "录像准备失败，请稍后重试。";
+      };
+      playerMeta.style.display = "grid";
+      playerActions.style.display = "flex";
+      playerMeta.innerHTML = `
+        <div>文件: ${item.filename}</div>
+        <div>开始时间: ${formatTime(item.started_at)}</div>
+        <div>大小: ${formatSize(item.size_bytes)}</div>
+        <div>路径: ${item.relative_path}</div>
+      `;
+      openLink.href = url;
+      downloadLink.href = originalUrl;
+      document.querySelectorAll(".record-item").forEach((el) => {
+        el.classList.toggle("active", el.dataset.path === selectedPath);
+      });
+    }
+
+    function renderRecordings(groups) {
+      const root = document.getElementById("recordings-view");
+      recordingIndex.clear();
+      if (!Array.isArray(groups) || groups.length === 0) {
+        root.className = "empty";
+        root.textContent = "还没有可播放的录像文件。";
+        return;
+      }
+
+      groups = groups
+        .filter((group) => group && Array.isArray(group.items))
+        .map((group) => ({ ...group, items: group.items.filter(Boolean) }));
+      if (groups.length === 0) {
+        root.className = "empty";
+        root.textContent = "录像列表数据格式异常，请刷新后重试。";
+        return;
+      }
+
+      root.className = "";
+      root.innerHTML = groups.map((group) => `
+        <section class="record-day">
+          <h3 class="record-day-title">${group.day}</h3>
+          <div class="record-list">
+            ${group.items.map((item) => `
+              <button
+                type="button"
+                class="record-item"
+                data-path="${item.relative_path}">
+                <div class="record-name">${item.filename}</div>
+                <div class="record-line">
+                  <span class="record-meta">${formatTime(item.started_at)}</span>
+                  <span class="record-meta">${formatSize(item.size_bytes)}</span>
+                </div>
+              </button>
+            `).join("")}
+          </div>
+        </section>
+      `).join("");
+
+      groups.forEach((group) => {
+        group.items.forEach((item) => {
+          recordingIndex.set(item.relative_path, item);
+        });
+      });
+      document.querySelectorAll(".record-item").forEach((el) => {
+        el.addEventListener("click", () => {
+          const item = recordingIndex.get(el.dataset.path || "");
+          if (item) renderSelection(item);
+        });
+      });
+
+      const first = groups[0]?.items?.[0];
+      if (first) renderSelection(first);
+    }
+
+    async function loadRecordings() {
+      const root = document.getElementById("recordings-view");
+      root.className = "empty";
+      root.textContent = "正在加载录像列表...";
+      try {
+        const res = await fetch("/api/recordings");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderRecordings(data);
+      } catch (err) {
+        root.className = "empty";
+        root.textContent = `加载失败: ${err.message || "未知错误"}`;
+      }
+    }
+
+    loadRecordings();
+  </script>
+</body>
+
+</html>

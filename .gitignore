@@ -1,29 +1,16 @@
-__pycache__/
-*.pyc
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-camera_monitor.egg-info/
-data/*.db
-data/*.sqlite
-data/*.log
-data/*.pid
-data/playback_cache/
-data/recording_settings.json
-data/recording_settings.tmp
-output/playwright/
+# Local runtime and developer state
+.idea/
 .playwright-cli/
-test-output/
 .test-runs/
-yolov8n.pt
-yolov8s.pt
+.coverage
 .env
 Caddy.local.env
 Caddyfile.local
 caddy/
-docs/_site/
-uvicorn.*.log
+
+# Keep only the database needed for one-time legacy migration.
+data/*
+!data/monitor.db
 
 # Android
 android-app/.gradle/
@@ -35,6 +22,6 @@ android-app/local.properties
 android-app/keystore.properties
 android-app/signing/
 
-# Windows desktop
-windows-desktop/**/bin/
-windows-desktop/**/obj/
+# Rust native Windows application
+windows-native/target/
+windows-native/dist/*.pdb
