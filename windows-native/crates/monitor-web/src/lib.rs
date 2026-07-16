@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_stream::stream;
 use axum::{
     Json, Router,
@@ -12,17 +12,23 @@ use axum::{
 };
 use monitor_media::{MediaController, RuntimeStatus};
 use monitor_storage::{
-    AppPaths, RecordingMode, Repository, Settings, list_recordings, load_or_create_settings,
-    resolve_recording, save_settings_atomic,
+    AppPaths, RecordingMode, RemoteNode, Repository, Settings, list_recordings,
+    load_or_create_settings, resolve_recording, save_settings_atomic,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     convert::Infallible,
     net::SocketAddr,
     sync::{Arc, RwLock},
+    time::Duration,
 };
-use tokio::sync::watch;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    sync::watch,
+    time::timeout,
+};
 use tower::ServiceExt;
 use tower_http::{compression::CompressionLayer, services::ServeFile, trace::TraceLayer};
 
@@ -127,6 +133,12 @@ pub fn router(state: WebState) -> Router {
         .route("/api/health", get(health))
         .route("/stats", get(stats))
         .route("/api/capture_info", get(capture_info))
+        .route("/api/selected_capture_info", get(selected_capture_info))
+        .route("/api/local_cameras", get(local_cameras))
+        .route("/api/cameras", get(cameras).post(select_camera))
+        .route("/api/remote_nodes", get(remote_nodes).post(add_remote_node))
+        .route("/api/remote_stream/{node}", get(remote_stream))
+        .route("/api/remote_audio/{node}", get(remote_audio))
         .route("/api/camera_settings", post(camera_settings))
         .route("/api/recording_mode", post(recording_mode))
         .route("/api/local_recording", post(local_recording))
@@ -167,6 +179,8 @@ async fn health(State(state): State<WebState>) -> Json<Value> {
         "gpu_utilization": 0.0,
         "capture_status": runtime.capture_status,
         "capture_backend": runtime.capture_backend,
+        "camera_id": runtime.camera_id,
+        "camera_name": runtime.camera_name,
         "encoder": runtime.encoder,
         "ai_enabled": false,
         "preview_clients": runtime.preview_clients,
@@ -175,6 +189,499 @@ async fn health(State(state): State<WebState>) -> Json<Value> {
         "recording_bitrate": runtime.recording_bitrate,
         "last_error": runtime.last_error,
     }))
+}
+
+#[derive(Clone, Serialize)]
+struct CameraOption {
+    id: String,
+    name: String,
+    source: &'static str,
+    online: bool,
+    stream_url: String,
+    audio_url: String,
+}
+
+async fn local_cameras(State(state): State<WebState>) -> Response {
+    let controller = state.media.clone();
+    match tokio::task::spawn_blocking(move || controller.list_cameras()).await {
+        Ok(Ok(devices)) => Json(json!({"cameras": devices})).into_response(),
+        Ok(Err(error)) => internal_error(error),
+        Err(error) => internal_error(error),
+    }
+}
+
+async fn cameras(State(state): State<WebState>) -> Response {
+    let controller = state.media.clone();
+    let local_devices = match tokio::task::spawn_blocking(move || controller.list_cameras()).await {
+        Ok(Ok(devices)) => devices,
+        Ok(Err(error)) => return internal_error(error),
+        Err(error) => return internal_error(error),
+    };
+    let runtime = state.runtime.read().expect("runtime poisoned").clone();
+    let settings = state.settings.read().expect("settings poisoned").clone();
+    let mut devices: Vec<CameraOption> = local_devices
+        .into_iter()
+        .map(|device| CameraOption {
+            id: format!("local:{}", device.id),
+            name: format!("本机 · {}", device.name),
+            source: "local",
+            online: true,
+            stream_url: "/stream".into(),
+            audio_url: "/api/audio/pcm".into(),
+        })
+        .collect();
+    for (node_index, node) in settings.remote_nodes.iter().enumerate() {
+        match fetch_remote_cameras(node).await {
+            Ok(remote_devices) if !remote_devices.is_empty() => {
+                let remote_devices = prefer_physical_cameras(remote_devices);
+                devices.extend(remote_devices.into_iter().map(|device| CameraOption {
+                    id: format!("remote:{node_index}:{}", device.id),
+                    name: format!("{} · {}", node.name, device.name),
+                    source: "remote",
+                    online: true,
+                    stream_url: format!("/api/remote_stream/{node_index}"),
+                    audio_url: format!("/api/remote_audio/{node_index}"),
+                }));
+            }
+            _ => devices.push(CameraOption {
+                id: format!("remote:{node_index}:"),
+                name: format!("{} · 摄像头（离线）", node.name),
+                source: "remote",
+                online: false,
+                stream_url: format!("/api/remote_stream/{node_index}"),
+                audio_url: format!("/api/remote_audio/{node_index}"),
+            }),
+        }
+    }
+    let local_selected = if runtime.camera_id.is_empty() {
+        settings.camera_id.clone()
+    } else {
+        runtime.camera_id
+    };
+    let fallback_selected = (!local_selected.is_empty()).then(|| format!("local:{local_selected}"));
+    let selected_id = if devices
+        .iter()
+        .any(|device| device.online && device.id == settings.selected_camera_key)
+    {
+        settings.selected_camera_key
+    } else {
+        fallback_selected.unwrap_or_default()
+    };
+    Json(json!({
+        "cameras": devices,
+        "selected_id": selected_id,
+    }))
+    .into_response()
+}
+
+fn prefer_physical_cameras(
+    devices: Vec<monitor_media::CameraDevice>,
+) -> Vec<monitor_media::CameraDevice> {
+    let has_physical = devices
+        .iter()
+        .any(|device| !device.id.to_ascii_uppercase().contains("SWD#SGDEVAPI#"));
+    if !has_physical {
+        return devices;
+    }
+    devices
+        .into_iter()
+        .filter(|device| !device.id.to_ascii_uppercase().contains("SWD#SGDEVAPI#"))
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct CameraSelectionPayload {
+    camera_id: String,
+}
+
+async fn select_camera(
+    State(state): State<WebState>,
+    Json(payload): Json<CameraSelectionPayload>,
+) -> Response {
+    if payload.camera_id.trim().is_empty() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"detail":"camera_id is required"})),
+        )
+            .into_response();
+    }
+    let camera_key = payload.camera_id;
+    let selected = if let Some(camera_id) = camera_key.strip_prefix("local:") {
+        let camera_id = camera_id.to_owned();
+        let controller = state.media.clone();
+        let device =
+            match tokio::task::spawn_blocking(move || controller.select_camera(camera_id)).await {
+                Ok(Ok(device)) => device,
+                Ok(Err(error)) => {
+                    return (
+                        StatusCode::CONFLICT,
+                        Json(json!({"detail": error.to_string()})),
+                    )
+                        .into_response();
+                }
+                Err(error) => return internal_error(error),
+            };
+        CameraOption {
+            id: camera_key.clone(),
+            name: format!("本机 · {}", device.name),
+            source: "local",
+            online: true,
+            stream_url: "/stream".into(),
+            audio_url: "/api/audio/pcm".into(),
+        }
+    } else if let Some(remote_key) = camera_key.strip_prefix("remote:") {
+        let Some((node_index, remote_camera_id)) = remote_key.split_once(':') else {
+            return invalid_camera_key();
+        };
+        let Ok(node_index) = node_index.parse::<usize>() else {
+            return invalid_camera_key();
+        };
+        let node = {
+            let settings = state.settings.read().expect("settings poisoned");
+            settings.remote_nodes.get(node_index).cloned()
+        };
+        let Some(node) = node else {
+            return invalid_camera_key();
+        };
+        if remote_camera_id.is_empty() {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({"detail":"远程电脑当前离线"})),
+            )
+                .into_response();
+        }
+        if let Err(error) = select_remote_camera(&node, remote_camera_id).await {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"detail": format!("远程摄像头切换失败：{error}")})),
+            )
+                .into_response();
+        }
+        let name = fetch_remote_cameras(&node)
+            .await
+            .ok()
+            .and_then(|devices| {
+                devices
+                    .into_iter()
+                    .find(|device| device.id == remote_camera_id)
+            })
+            .map(|device| device.name)
+            .unwrap_or_else(|| "摄像头".into());
+        CameraOption {
+            id: camera_key.clone(),
+            name: format!("{} · {name}", node.name),
+            source: "remote",
+            online: true,
+            stream_url: format!("/api/remote_stream/{node_index}"),
+            audio_url: format!("/api/remote_audio/{node_index}"),
+        }
+    } else {
+        return invalid_camera_key();
+    };
+    {
+        let mut settings = state.settings.write().expect("settings poisoned");
+        settings.selected_camera_key = camera_key.clone();
+        if let Some(camera_id) = camera_key.strip_prefix("local:") {
+            settings.camera_id = camera_id.to_owned();
+        }
+    }
+    let mut persisted = match load_or_create_settings(&state.paths) {
+        Ok(settings) => settings,
+        Err(error) => return internal_error(error),
+    };
+    persisted.selected_camera_key = camera_key.clone();
+    if let Some(camera_id) = camera_key.strip_prefix("local:") {
+        persisted.camera_id = camera_id.to_owned();
+    }
+    if let Err(error) = save_settings_atomic(&state.paths, &persisted) {
+        return internal_error(error);
+    }
+    Json(json!({"selected": selected})).into_response()
+}
+
+fn invalid_camera_key() -> Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({"detail":"invalid camera key"})),
+    )
+        .into_response()
+}
+
+async fn remote_nodes(State(state): State<WebState>) -> Json<Value> {
+    let nodes = state
+        .settings
+        .read()
+        .expect("settings poisoned")
+        .remote_nodes
+        .clone();
+    Json(json!({"nodes": nodes}))
+}
+
+#[derive(Deserialize)]
+struct RemoteNodePayload {
+    name: String,
+    address: String,
+}
+
+async fn add_remote_node(
+    State(state): State<WebState>,
+    Json(payload): Json<RemoteNodePayload>,
+) -> Response {
+    let address = payload.address.trim();
+    if address.parse::<SocketAddr>().is_err() || payload.name.trim().is_empty() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"detail":"name and address (IP:port) are required"})),
+        )
+            .into_response();
+    }
+    let node = RemoteNode {
+        name: payload.name.trim().to_owned(),
+        address: address.to_owned(),
+    };
+    {
+        let mut settings = state.settings.write().expect("settings poisoned");
+        if let Some(existing) = settings
+            .remote_nodes
+            .iter_mut()
+            .find(|existing| existing.address == node.address)
+        {
+            *existing = node.clone();
+        } else {
+            settings.remote_nodes.push(node.clone());
+        }
+    }
+    let mut persisted = match load_or_create_settings(&state.paths) {
+        Ok(settings) => settings,
+        Err(error) => return internal_error(error),
+    };
+    if let Some(existing) = persisted
+        .remote_nodes
+        .iter_mut()
+        .find(|existing| existing.address == node.address)
+    {
+        *existing = node.clone();
+    } else {
+        persisted.remote_nodes.push(node.clone());
+    }
+    if let Err(error) = save_settings_atomic(&state.paths, &persisted) {
+        return internal_error(error);
+    }
+    Json(json!({"node": node})).into_response()
+}
+
+async fn remote_stream(
+    State(state): State<WebState>,
+    AxumPath(node_index): AxumPath<usize>,
+) -> Response {
+    let node = {
+        let settings = state.settings.read().expect("settings poisoned");
+        settings.remote_nodes.get(node_index).cloned()
+    };
+    let Some(node) = node else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (mut socket, initial, status, content_type) =
+        match open_remote_response(&node, "GET", "/stream", None).await {
+            Ok(response) => response,
+            Err(error) => return (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
+        };
+    if status != 200 {
+        return (
+            StatusCode::BAD_GATEWAY,
+            format!("remote stream returned {status}"),
+        )
+            .into_response();
+    }
+    let body = Body::from_stream(stream! {
+        if !initial.is_empty() {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from(initial));
+        }
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            match socket.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => yield Ok::<Bytes, std::io::Error>(Bytes::copy_from_slice(&buffer[..read])),
+                Err(_) => break,
+            }
+        }
+    });
+    let mut response = Response::new(body);
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&content_type).unwrap_or_else(|_| {
+            HeaderValue::from_static("multipart/x-mixed-replace; boundary=frame")
+        }),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+async fn remote_audio(
+    State(state): State<WebState>,
+    AxumPath(node_index): AxumPath<usize>,
+) -> Response {
+    let node = {
+        let settings = state.settings.read().expect("settings poisoned");
+        settings.remote_nodes.get(node_index).cloned()
+    };
+    let Some(node) = node else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (mut socket, initial, status, _) =
+        match open_remote_response(&node, "GET", "/api/audio/pcm", None).await {
+            Ok(response) => response,
+            Err(error) => return (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
+        };
+    if status != 200 {
+        return (
+            StatusCode::BAD_GATEWAY,
+            format!("remote audio returned {status}"),
+        )
+            .into_response();
+    }
+    let body = Body::from_stream(stream! {
+        if !initial.is_empty() {
+            yield Ok::<Bytes, std::io::Error>(Bytes::from(initial));
+        }
+        let mut buffer = vec![0u8; 32 * 1024];
+        loop {
+            match socket.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => yield Ok::<Bytes, std::io::Error>(Bytes::copy_from_slice(&buffer[..read])),
+                Err(_) => break,
+            }
+        }
+    });
+    let mut response = Response::new(body);
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert("X-Audio-Sample-Rate", HeaderValue::from_static("16000"));
+    response
+        .headers_mut()
+        .insert("X-Audio-Channels", HeaderValue::from_static("1"));
+    response
+}
+
+async fn fetch_remote_cameras(node: &RemoteNode) -> Result<Vec<monitor_media::CameraDevice>> {
+    let (_, initial, status, _) =
+        open_remote_response(node, "GET", "/api/local_cameras", None).await?;
+    if status == 200 {
+        if initial.len() > 1024 * 1024 {
+            anyhow::bail!("remote camera list is too large");
+        }
+        let value: Value = serde_json::from_slice(&initial)?;
+        if let Ok(devices) = serde_json::from_value(value["cameras"].clone()) {
+            return Ok(devices);
+        }
+    }
+    if let Ok((_, initial, 200, _)) = open_remote_response(node, "GET", "/api/cameras", None).await
+    {
+        if initial.len() > 1024 * 1024 {
+            anyhow::bail!("remote camera list is too large");
+        }
+        let value: Value = serde_json::from_slice(&initial)?;
+        if let Ok(devices) = serde_json::from_value(value["cameras"].clone()) {
+            return Ok(devices);
+        }
+    }
+    let (_, _, status, _) = open_remote_response(node, "GET", "/api/health", None).await?;
+    if status == 200 {
+        return Ok(vec![monitor_media::CameraDevice {
+            id: "__default__".into(),
+            name: "摄像头".into(),
+            has_microphone: false,
+        }]);
+    }
+    anyhow::bail!("remote health returned {status}")
+}
+
+async fn select_remote_camera(node: &RemoteNode, camera_id: &str) -> Result<()> {
+    if camera_id == "__default__" {
+        let (_, _, status, _) = open_remote_response(node, "GET", "/api/health", None).await?;
+        if status == 200 {
+            return Ok(());
+        }
+        anyhow::bail!("remote health returned {status}");
+    }
+    let mut last_status = 0;
+    for candidate in [format!("local:{camera_id}"), camera_id.to_owned()] {
+        let body = serde_json::to_vec(&json!({"camera_id": candidate}))?;
+        let (_, _, status, _) =
+            open_remote_response(node, "POST", "/api/cameras", Some(&body)).await?;
+        if status == 200 {
+            return Ok(());
+        }
+        last_status = status;
+    }
+    anyhow::bail!("remote camera selection returned {last_status}")
+}
+
+async fn open_remote_response(
+    node: &RemoteNode,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> Result<(TcpStream, Vec<u8>, u16, String)> {
+    let mut socket = timeout(
+        Duration::from_millis(1200),
+        TcpStream::connect(&node.address),
+    )
+    .await??;
+    let body = body.unwrap_or_default();
+    let request = format!(
+        "{method} {path} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        node.address,
+        body.len()
+    );
+    socket.write_all(request.as_bytes()).await?;
+    if !body.is_empty() {
+        socket.write_all(body).await?;
+    }
+    let mut received = Vec::with_capacity(4096);
+    let header_end = loop {
+        if received.len() > 64 * 1024 {
+            anyhow::bail!("remote response headers are too large");
+        }
+        let mut chunk = [0u8; 4096];
+        let read = timeout(Duration::from_secs(5), socket.read(&mut chunk)).await??;
+        if read == 0 {
+            anyhow::bail!("remote response ended before headers");
+        }
+        received.extend_from_slice(&chunk[..read]);
+        if let Some(position) = received.windows(4).position(|window| window == b"\r\n\r\n") {
+            break position + 4;
+        }
+    };
+    let header_text = std::str::from_utf8(&received[..header_end])?;
+    let status = header_text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|value| value.parse::<u16>().ok())
+        .context("remote response status is invalid")?;
+    let content_type = header_text
+        .lines()
+        .find_map(|line| {
+            line.split_once(':')
+                .filter(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        })
+        .map(|(_, value)| value.trim().to_owned())
+        .unwrap_or_else(|| "application/octet-stream".into());
+    let mut body_bytes = received.split_off(header_end);
+    if path != "/stream" && path != "/api/audio/pcm" {
+        timeout(Duration::from_secs(5), socket.read_to_end(&mut body_bytes)).await??;
+    }
+    Ok((socket, body_bytes, status, content_type))
 }
 
 async fn stats(State(state): State<WebState>) -> Json<Value> {
@@ -197,7 +704,7 @@ async fn capture_info(State(state): State<WebState>) -> Json<Value> {
         "requested_height": settings.height,
         "actual_width": runtime.width,
         "actual_height": runtime.height,
-        "mjpeg_quality": 85,
+        "mjpeg_quality": 75,
         "target_fps": settings.fps,
         "capture_status": runtime.capture_status,
         "capture_backend": runtime.capture_backend,
@@ -219,7 +726,42 @@ async fn capture_info(State(state): State<WebState>) -> Json<Value> {
     }))
 }
 
-#[derive(Deserialize)]
+async fn selected_capture_info(State(state): State<WebState>) -> Response {
+    let remote_node = {
+        let settings = state.settings.read().expect("settings poisoned");
+        settings
+            .selected_camera_key
+            .strip_prefix("remote:")
+            .and_then(|key| key.split_once(':'))
+            .and_then(|(node_index, _)| node_index.parse::<usize>().ok())
+            .and_then(|node_index| settings.remote_nodes.get(node_index).cloned())
+    };
+    let Some(node) = remote_node else {
+        return capture_info(State(state)).await.into_response();
+    };
+    match open_remote_response(&node, "GET", "/api/capture_info", None).await {
+        Ok((_, body, 200, _)) => match serde_json::from_slice::<Value>(&body) {
+            Ok(value) => Json(value).into_response(),
+            Err(error) => (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"detail": format!("远程摄像头状态解析失败：{error}")})),
+            )
+                .into_response(),
+        },
+        Ok((_, _, status, _)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"detail": format!("远程摄像头状态请求失败：HTTP {status}")})),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"detail": format!("无法连接远程摄像头：{error}")})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 struct CameraSettings {
     width: u32,
     height: u32,
@@ -239,6 +781,61 @@ async fn camera_settings(
             Json(json!({"detail":"invalid camera settings"})),
         )
             .into_response();
+    }
+
+    let remote_node = {
+        let settings = state.settings.read().expect("settings poisoned");
+        settings
+            .selected_camera_key
+            .strip_prefix("remote:")
+            .and_then(|key| key.split_once(':'))
+            .and_then(|(node_index, _)| node_index.parse::<usize>().ok())
+            .and_then(|node_index| settings.remote_nodes.get(node_index).cloned())
+    };
+    if let Some(node) = remote_node {
+        let body = match serde_json::to_vec(&payload) {
+            Ok(body) => body,
+            Err(error) => return internal_error(error),
+        };
+        return match open_remote_response(&node, "POST", "/api/camera_settings", Some(&body)).await
+        {
+            Ok((_, body, 200, _)) => match serde_json::from_slice::<Value>(&body) {
+                Ok(value) => Json(value).into_response(),
+                Err(error) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({"detail": format!("远程设置响应解析失败：{error}")})),
+                )
+                    .into_response(),
+            },
+            Ok((_, body, status, _)) => {
+                let detail = serde_json::from_slice::<Value>(&body)
+                    .ok()
+                    .and_then(|value| value["detail"].as_str().map(str::to_owned))
+                    .unwrap_or_else(|| format!("HTTP {status}"));
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({"detail": format!("远程摄像头设置失败：{detail}")})),
+                )
+                    .into_response()
+            }
+            Err(error) => (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"detail": format!("无法连接远程摄像头：{error}")})),
+            )
+                .into_response(),
+        };
+    }
+
+    let controller = state.media.clone();
+    let width = payload.width;
+    let height = payload.height;
+    let fps = payload.fps;
+    if let Err(error) =
+        tokio::task::spawn_blocking(move || controller.set_capture_settings(width, height, fps))
+            .await
+            .unwrap_or_else(|error| Err(error.into()))
+    {
+        return internal_error(error);
     }
     {
         let mut settings = state.settings.write().expect("settings poisoned");
@@ -532,8 +1129,10 @@ async fn mjpeg_stream(State(state): State<WebState>) -> Response {
             if receiver.changed().await.is_err() { break; }
             let jpeg = receiver.borrow().clone();
             if jpeg.is_empty() { continue; }
-            let mut chunk = Vec::with_capacity(jpeg.len() + 64);
-            chunk.extend_from_slice(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n");
+            let mut chunk = Vec::with_capacity(jpeg.len() + 96);
+            chunk.extend_from_slice(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ");
+            chunk.extend_from_slice(jpeg.len().to_string().as_bytes());
+            chunk.extend_from_slice(b"\r\n\r\n");
             chunk.extend_from_slice(&jpeg);
             chunk.extend_from_slice(b"\r\n");
             yield Ok::<Bytes, Infallible>(Bytes::from(chunk));
@@ -547,6 +1146,9 @@ async fn mjpeg_stream(State(state): State<WebState>) -> Response {
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert("X-Accel-Buffering", HeaderValue::from_static("no"));
     response
 }
 

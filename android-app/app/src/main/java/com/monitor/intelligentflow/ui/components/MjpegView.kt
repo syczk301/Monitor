@@ -2,6 +2,8 @@ package com.monitor.intelligentflow.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -60,9 +62,10 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
+import java.io.EOFException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 private const val AI_ZOOM_THRESHOLD = 1.5f
 private const val AI_REFRESH_MS = 200L
@@ -94,9 +97,28 @@ fun MjpegView(
         onDispose { superRes.release() }
     }
 
-    DisposableEffect(streamUrl) {
+    DisposableEffect(streamUrl, authHeader) {
         val running = AtomicBoolean(true)
-        val thread = Thread {
+        val latestFrame = AtomicReference<ByteArray?>(null)
+        val activeCall = AtomicReference<okhttp3.Call?>(null)
+        val mainHandler = Handler(Looper.getMainLooper())
+        val decoderThread = Thread {
+            while (running.get()) {
+                val data = latestFrame.getAndSet(null)
+                if (data == null) {
+                    try { Thread.sleep(4) } catch (_: InterruptedException) { break }
+                    continue
+                }
+                val bmp = BitmapFactory.decodeByteArray(data, 0, data.size)
+                if (bmp != null && running.get()) {
+                    mainHandler.post {
+                        if (running.get()) currentFrame = bmp
+                    }
+                }
+            }
+        }.apply { isDaemon = true; name = "mjpeg-bitmap-decoder"; start() }
+
+        val networkThread = Thread {
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS)
@@ -106,7 +128,9 @@ fun MjpegView(
                 try {
                     val reqBuilder = Request.Builder().url(streamUrl)
                     authHeader?.let { reqBuilder.header("Authorization", it) }
-                    val response = client.newCall(reqBuilder.build()).execute()
+                    val call = client.newCall(reqBuilder.build())
+                    activeCall.set(call)
+                    val response = call.execute()
 
                     if (!response.isSuccessful) {
                         error = "HTTP ${response.code}"
@@ -118,30 +142,9 @@ fun MjpegView(
                     error = null
                     val body = response.body ?: continue
                     val input = BufferedInputStream(body.byteStream(), 64 * 1024)
-                    val buffer = ByteArrayOutputStream()
-                    var prev = 0
-                    var inFrame = false
-
                     while (running.get()) {
-                        val b = input.read()
-                        if (b == -1) break
-                        if (!inFrame) {
-                            if (prev == 0xFF && b == 0xD8) {
-                                buffer.reset()
-                                buffer.write(0xFF)
-                                buffer.write(0xD8)
-                                inFrame = true
-                            }
-                        } else {
-                            buffer.write(b)
-                            if (prev == 0xFF && b == 0xD9) {
-                                val data = buffer.toByteArray()
-                                val bmp = BitmapFactory.decodeByteArray(data, 0, data.size)
-                                if (bmp != null) currentFrame = bmp
-                                inFrame = false
-                            }
-                        }
-                        prev = b
+                        val data = readMjpegFrame(input) ?: break
+                        latestFrame.set(data)
                     }
                     response.close()
                 } catch (e: Exception) {
@@ -149,11 +152,20 @@ fun MjpegView(
                         error = e.message
                         try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
                     }
+                } finally {
+                    activeCall.getAndSet(null)?.cancel()
                 }
             }
-        }.apply { isDaemon = true; name = "mjpeg-decoder"; start() }
+        }.apply { isDaemon = true; name = "mjpeg-network-reader"; start() }
 
-        onDispose { running.set(false); thread.interrupt() }
+        onDispose {
+            running.set(false)
+            activeCall.getAndSet(null)?.cancel()
+            latestFrame.set(null)
+            networkThread.interrupt()
+            decoderThread.interrupt()
+            mainHandler.removeCallbacksAndMessages(null)
+        }
     }
 
     LaunchedEffect(gestureVersion, superRes.isAvailable) {
@@ -337,6 +349,46 @@ fun MjpegView(
                 modifier = Modifier.size(20.dp)
             )
         }
+    }
+}
+
+private const val MAX_MJPEG_FRAME_BYTES = 2 * 1024 * 1024
+
+private fun readMjpegFrame(input: BufferedInputStream): ByteArray? {
+    var line: String
+    do {
+        line = readAsciiLine(input) ?: return null
+    } while (!line.startsWith("--"))
+
+    var contentLength = -1
+    while (true) {
+        line = readAsciiLine(input) ?: return null
+        if (line.isEmpty()) break
+        if (line.startsWith("Content-Length:", ignoreCase = true)) {
+            contentLength = line.substringAfter(':').trim().toIntOrNull() ?: -1
+        }
+    }
+    if (contentLength !in 1..MAX_MJPEG_FRAME_BYTES) {
+        throw IllegalStateException("无效的视频帧长度: $contentLength")
+    }
+    val frame = ByteArray(contentLength)
+    var offset = 0
+    while (offset < frame.size) {
+        val count = input.read(frame, offset, frame.size - offset)
+        if (count < 0) throw EOFException("视频流意外中断")
+        offset += count
+    }
+    return frame
+}
+
+private fun readAsciiLine(input: BufferedInputStream): String? {
+    val line = StringBuilder(64)
+    while (true) {
+        val value = input.read()
+        if (value < 0) return if (line.isEmpty()) null else line.toString()
+        if (value == '\n'.code) return line.toString().trimEnd('\r')
+        if (line.length < 4096) line.append(value.toChar())
+        else throw IllegalStateException("视频流响应头过长")
     }
 }
 

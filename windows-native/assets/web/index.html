@@ -479,7 +479,9 @@
     .workspace { min-width:0; }
     .topbar { height:94px; display:flex; align-items:center; gap:28px; padding:0 30px; background:#fff; border-bottom:1px solid #e1e3e8; }
     .topbar h1 { font-size:24px; margin:0; font-weight:700; }
-    .site-select { border:1px solid #d9dce3; border-radius:8px; padding:11px 14px; background:#fff; color:#333842; min-width:230px; }
+    .site-select { border:1px solid #d9dce3; border-radius:8px; padding:11px 14px; background:#fff; color:#333842; min-width:230px; min-height:44px; cursor:pointer; }
+    .site-select:focus-visible { outline:3px solid rgba(79,70,229,.24); outline-offset:2px; border-color:#4f46e5; }
+    .site-select:disabled { cursor:wait; color:#7a818c; background:#f4f5f7; }
     .health { display:flex; align-items:center; gap:8px; color:#178c50; font-weight:650; }
     .health::before { content:''; width:9px; height:9px; border-radius:50%; background:#21a862; box-shadow:0 0 0 4px #e3f5eb; }
     .alert-link { margin-left:auto; text-decoration:none; color:#fff; background:#4f46e5; padding:12px 18px; border-radius:8px; font-weight:650; }
@@ -546,7 +548,7 @@
       <a class="side-link side-bottom" href="#camera-settings"><i class="bi bi-gear"></i><span>设备</span></a>
     </nav>
     <main class="workspace">
-      <header class="topbar"><h1>智能监控</h1><select class="site-select"><option>示范园区 · 1号出入口</option></select><div class="health">系统运行正常</div><a class="alert-link" href="/history"><i class="bi bi-exclamation-triangle"></i> 查看异常</a></header>
+      <header class="topbar"><h1>智能监控</h1><select id="camera-select" class="site-select" aria-label="选择摄像头" disabled><option value="">正在读取摄像头...</option></select><div class="health">系统运行正常</div><a class="alert-link" href="/history"><i class="bi bi-exclamation-triangle"></i> 查看异常</a></header>
       <div class="dashboard">
         <section class="monitor-column">
           <h2 class="section-title">实时画面</h2>
@@ -576,6 +578,7 @@
     const soundToggle = document.getElementById("sound-toggle");
     const appSoundToggle = document.getElementById("app-sound-toggle");
     const recordToggle = document.getElementById("record-toggle");
+    const cameraSelect = document.getElementById("camera-select");
     const appRecordToggle = document.getElementById("app-record-toggle");
     const audioStatus = document.getElementById("audio-status");
     const recordStatus = document.getElementById("record-status");
@@ -717,7 +720,7 @@
         pendingAudioBytes = new Uint8Array(0);
         nextAudioStartTime = audioContext.currentTime + 0.1;
 
-        const response = await fetch("/api/audio/pcm", {
+        const response = await fetch(activeAudioUrl, {
           signal: audioAbortController.signal,
           cache: "no-store",
         });
@@ -728,7 +731,7 @@
         audioEnabled = true;
         audioConnecting = false;
         updateSoundButtons();
-        setAudioStatus("声音已开启，正在播放后端默认麦克风。", "var(--accent)");
+        setAudioStatus("声音已开启，正在播放当前摄像头的声音。", "var(--accent)");
 
         const reader = response.body.getReader();
         while (audioEnabled) {
@@ -779,7 +782,7 @@
       imageWidth = nw;
       imageHeight = nh;
       const containerWidth = streamContainer.clientWidth || nw;
-      fitScale = Math.min(1, containerWidth / nw);
+      fitScale = containerWidth / nw;
       streamContainer.style.height = `${Math.round(nh * fitScale)}px`;
       streamWrapper.style.width = `${nw}px`;
       streamWrapper.style.height = `${nh}px`;
@@ -1088,6 +1091,87 @@
     const camFps = document.getElementById("cam-fps");
     const camApply = document.getElementById("cam-apply");
     const camMsg = document.getElementById("cam-msg");
+    let cameraListSignature = "";
+    let activeStreamUrl = "/stream";
+    let activeAudioUrl = "/api/audio/pcm";
+
+    async function loadCameras() {
+      const previous = cameraSelect.value;
+      try {
+        const res = await fetch("/api/cameras", { cache: "no-store" });
+        if (!res.ok) throw new Error(`camera list request failed: ${res.status}`);
+        const data = await res.json();
+        const cameras = Array.isArray(data.cameras) ? data.cameras : [];
+        const signature = JSON.stringify(cameras.map((camera) => [camera.id, camera.name, camera.online]));
+        if (signature !== cameraListSignature) {
+          cameraSelect.replaceChildren(...cameras.map((camera, index) => {
+            const option = document.createElement("option");
+            option.value = camera.id;
+            option.textContent = camera.name || `摄像头 ${index + 1}`;
+            option.disabled = camera.online === false;
+            return option;
+          }));
+          cameraListSignature = signature;
+        }
+        if (!cameras.length) {
+          const option = document.createElement("option");
+          option.value = "";
+          option.textContent = "未检测到摄像头";
+          cameraSelect.replaceChildren(option);
+          cameraSelect.disabled = true;
+          return;
+        }
+        const availableIds = new Set(cameras.map((camera) => camera.id));
+        const selected = availableIds.has(data.selected_id)
+          ? data.selected_id
+          : (availableIds.has(previous) ? previous : cameras[0].id);
+        cameraSelect.value = selected;
+        cameraSelect.disabled = false;
+        const selectedCamera = cameras.find((camera) => camera.id === selected);
+        activeAudioUrl = selectedCamera?.audio_url || "/api/audio/pcm";
+        if (selectedCamera?.stream_url && selectedCamera.stream_url !== activeStreamUrl) {
+          activeStreamUrl = selectedCamera.stream_url;
+          streamImage.src = `${activeStreamUrl}?camera=${Date.now()}`;
+        }
+      } catch (error) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "摄像头列表加载失败";
+        cameraSelect.replaceChildren(option);
+        cameraSelect.disabled = true;
+      }
+    }
+
+    cameraSelect.addEventListener("change", async () => {
+      const cameraId = cameraSelect.value;
+      if (!cameraId) return;
+      const resumeAudio = audioEnabled || audioConnecting;
+      if (resumeAudio) await stopAudioStream(false);
+      cameraSelect.disabled = true;
+      streamContainer.classList.remove("stream-ready");
+      streamLoading.hidden = false;
+      streamLoadingTitle.textContent = "正在切换摄像头";
+      streamLoadingDetail.textContent = "正在释放当前设备并连接新画面";
+      try {
+        const res = await fetch("/api/cameras", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ camera_id: cameraId })
+        });
+        if (!res.ok) throw new Error(`camera selection failed: ${res.status}`);
+        const data = await res.json();
+        activeStreamUrl = data.selected.stream_url || "/stream";
+        activeAudioUrl = data.selected.audio_url || "/api/audio/pcm";
+        streamImage.src = `${activeStreamUrl}?camera=${Date.now()}`;
+      } catch (error) {
+        streamLoadingTitle.textContent = "摄像头切换失败";
+        streamLoadingDetail.textContent = "请确认设备仍已连接，然后重试";
+      } finally {
+        await loadCameras();
+        await loadCamSettings();
+        if (resumeAudio) await startAudioStream();
+      }
+    });
 
     function updateRecordingInfo(d) {
       const mode = d.recording_mode || (d.local_recording_enabled ? "continuous" : "off");
@@ -1115,7 +1199,8 @@
 
     async function loadCamSettings() {
       try {
-        const res = await fetch("/api/capture_info");
+        const res = await fetch("/api/selected_capture_info");
+        if (!res.ok) throw new Error(`camera status request failed: ${res.status}`);
         const d = await res.json();
         const key = `${d.requested_width}x${d.requested_height}`;
         for (const opt of camRes.options) {
@@ -1131,25 +1216,35 @@
     camApply.addEventListener("click", async () => {
       const [w, h] = camRes.value.split("x").map(Number);
       const fps = parseInt(camFps.value);
+      const originalLabel = camApply.textContent;
       camApply.disabled = true;
       camApply.textContent = "切换中...";
       camMsg.textContent = "";
+      streamContainer.classList.remove("stream-ready");
+      streamLoading.hidden = false;
+      streamLoadingTitle.textContent = "正在应用摄像头设置";
+      streamLoadingDetail.textContent = `${w}×${h} · ${fps} FPS`;
       try {
         const res = await fetch("/api/camera_settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ width: w, height: h, fps })
         });
-        if (!res.ok) throw new Error(`camera settings request failed: ${res.status}`);
         const d = await res.json();
-        camMsg.textContent = `已切换: ${d.actual_width}x${d.actual_height}`;
+        if (!res.ok) throw new Error(d.detail || `camera settings request failed: ${res.status}`);
+        streamImage.src = `${activeStreamUrl}?settings=${Date.now()}`;
+        camMsg.textContent = `已应用：${w}×${h} · ${fps} FPS`;
         camMsg.style.color = "var(--accent)";
+        await loadCamSettings();
       } catch (e) {
-        camMsg.textContent = "切换失败";
+        camMsg.textContent = `切换失败：${e.message || "请重试"}`;
         camMsg.style.color = "#ef4444";
+        streamLoadingTitle.textContent = "摄像头设置失败";
+        streamLoadingDetail.textContent = "请确认摄像头在线后重试";
+      } finally {
+        camApply.disabled = false;
+        camApply.textContent = originalLabel;
       }
-      camApply.disabled = false;
-      camApply.textContent = "应用";
     });
 
     async function changeRecordingMode() {
@@ -1175,6 +1270,8 @@
     if (recordToggle) recordToggle.addEventListener("change", changeRecordingMode);
 
     loadCamSettings();
+    loadCameras();
+    setInterval(loadCameras, 10000);
     setInterval(loadCamSettings, 5000);
     updateSoundButtons();
     updateRecordButtons("off");

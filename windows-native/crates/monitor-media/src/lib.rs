@@ -3,7 +3,7 @@ use chrono::{Datelike, Local, Timelike};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use fs2::available_space;
 use monitor_storage::{RecordingMode, Settings};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -15,7 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::{
-    Graphics::Imaging::{BitmapEncoder, BitmapSize},
+    Foundation::{PropertyType, PropertyValue},
+    Graphics::Imaging::{BitmapEncoder, BitmapPropertySet, BitmapSize, BitmapTypedValue},
     Media::{
         Capture::Frames::{
             MediaFrameReader, MediaFrameReaderAcquisitionMode, MediaFrameReaderStartStatus,
@@ -49,8 +50,17 @@ use windows::{
     core::HSTRING,
 };
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CameraDevice {
+    pub id: String,
+    pub name: String,
+    pub has_microphone: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RuntimeStatus {
+    pub camera_id: String,
+    pub camera_name: String,
     pub capture_status: String,
     pub capture_backend: String,
     pub fps: f64,
@@ -74,6 +84,8 @@ pub struct RuntimeStatus {
 impl RuntimeStatus {
     pub fn new(settings: &Settings) -> Self {
         Self {
+            camera_id: settings.camera_id.clone(),
+            camera_name: String::new(),
             capture_status: "initializing".into(),
             capture_backend: "Media Foundation".into(),
             fps: 0.0,
@@ -98,6 +110,9 @@ impl RuntimeStatus {
 
 enum RecorderCommand {
     SetMode(RecordingMode),
+    SetCaptureSettings(u32, u32, u32, Sender<Result<()>>),
+    ListCameras(Sender<Result<Vec<CameraDevice>>>),
+    SelectCamera(String, Sender<Result<CameraDevice>>),
     Shutdown,
 }
 
@@ -119,6 +134,33 @@ impl MediaController {
     pub fn set_mode(&self, mode: RecordingMode) -> Result<()> {
         self.commands.send(RecorderCommand::SetMode(mode))?;
         Ok(())
+    }
+
+    pub fn list_cameras(&self) -> Result<Vec<CameraDevice>> {
+        let (sender, receiver) = bounded(1);
+        self.commands.send(RecorderCommand::ListCameras(sender))?;
+        receiver
+            .recv_timeout(Duration::from_secs(3))
+            .context("camera enumeration timed out")?
+    }
+
+    pub fn select_camera(&self, camera_id: String) -> Result<CameraDevice> {
+        let (sender, receiver) = bounded(1);
+        self.commands
+            .send(RecorderCommand::SelectCamera(camera_id, sender))?;
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .context("camera selection timed out")?
+    }
+
+    pub fn set_capture_settings(&self, width: u32, height: u32, fps: u32) -> Result<()> {
+        let (sender, receiver) = bounded(1);
+        self.commands.send(RecorderCommand::SetCaptureSettings(
+            width, height, fps, sender,
+        ))?;
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .context("camera settings update timed out")?
     }
 }
 
@@ -209,12 +251,58 @@ fn recorder_thread(
     let mut retry_at = Instant::now();
     let mut frame_reader: Option<PreviewReader> = None;
     let mut last_preview = Instant::now();
+    let mut selected_camera_id =
+        (!settings.camera_id.is_empty()).then(|| settings.camera_id.clone());
 
     loop {
         match commands.recv_timeout(Duration::from_millis(15)) {
             Ok(RecorderCommand::Shutdown)
             | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
             Ok(RecorderCommand::SetMode(mode)) => settings.recording_mode = mode,
+            Ok(RecorderCommand::SetCaptureSettings(width, height, fps, response)) => {
+                finish_recording(&mut recording, &mut active_paths, &status);
+                segment_hour = None;
+                stop_preview_reader(&mut frame_reader);
+                capture = None;
+                settings.width = width;
+                settings.height = height;
+                settings.fps = fps;
+                retry_at = Instant::now();
+                update(&status, |s| {
+                    s.width = width;
+                    s.height = height;
+                    s.fps = 0.0;
+                    s.capture_status = "initializing".into();
+                    s.preview_status = "waiting-camera".into();
+                    s.preview_error.clear();
+                    s.last_error.clear();
+                });
+                let _ = response.send(Ok(()));
+            }
+            Ok(RecorderCommand::ListCameras(response)) => {
+                let _ = response.send(list_camera_devices());
+            }
+            Ok(RecorderCommand::SelectCamera(camera_id, response)) => {
+                let result = find_camera(&camera_id);
+                if let Ok(device) = &result {
+                    finish_recording(&mut recording, &mut active_paths, &status);
+                    segment_hour = None;
+                    stop_preview_reader(&mut frame_reader);
+                    capture = None;
+                    selected_camera_id = Some(device.id.clone());
+                    settings.camera_id = device.id.clone();
+                    retry_at = Instant::now();
+                    update(&status, |s| {
+                        s.camera_id = device.id.clone();
+                        s.camera_name = device.name.clone();
+                        s.capture_status = "initializing".into();
+                        s.preview_status = "waiting-camera".into();
+                        s.preview_error.clear();
+                        s.last_error.clear();
+                    });
+                }
+                let _ = response.send(result);
+            }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
         }
 
@@ -236,7 +324,9 @@ fn recorder_thread(
                 .map(|s| s.preview_clients + s.audio_clients)
                 .unwrap_or(0);
             if live_clients > 0 && capture.is_none() && Instant::now() >= retry_at {
-                if let Err(error) = ensure_capture(&mut capture) {
+                if let Err(error) =
+                    ensure_capture(&mut capture, selected_camera_id.as_deref(), &status)
+                {
                     set_error(&status, format!("camera preview start failed: {error:#}"));
                     retry_at = Instant::now() + Duration::from_secs(2);
                 } else {
@@ -250,6 +340,10 @@ fn recorder_thread(
             publish_preview_if_needed(
                 &capture,
                 &mut frame_reader,
+                selected_camera_id.as_deref(),
+                settings.width,
+                settings.height,
+                settings.fps,
                 &status,
                 preview.as_ref(),
                 &mut last_preview,
@@ -260,6 +354,10 @@ fn recorder_thread(
             publish_preview_if_needed(
                 &capture,
                 &mut frame_reader,
+                selected_camera_id.as_deref(),
+                settings.width,
+                settings.height,
+                settings.fps,
                 &status,
                 preview.as_ref(),
                 &mut last_preview,
@@ -268,13 +366,19 @@ fn recorder_thread(
         }
 
         if capture.is_none() {
-            if let Err(error) = ensure_capture(&mut capture) {
+            if let Err(error) = ensure_capture(&mut capture, selected_camera_id.as_deref(), &status)
+            {
                 set_error(&status, format!("camera initialization failed: {error:#}"));
                 retry_at = Instant::now() + Duration::from_secs(2);
                 continue;
             }
         }
-        match start_recording(&settings, &mut capture) {
+        match start_recording(
+            &settings,
+            &mut capture,
+            selected_camera_id.as_deref(),
+            &status,
+        ) {
             Ok(started) => {
                 segment_hour = Some(current_hour);
                 active_paths = Some((started.partial.clone(), started.final_path));
@@ -282,7 +386,7 @@ fn recorder_thread(
                 update(&status, |s| {
                     s.capture_status = "running".into();
                     s.microphone_status = "running".into();
-                    s.fps = 30.0;
+                    s.fps = settings.fps as f64;
                     s.width = started.width;
                     s.height = started.height;
                     s.encoder = started.encoder.into();
@@ -295,6 +399,10 @@ fn recorder_thread(
                 publish_preview_if_needed(
                     &capture,
                     &mut frame_reader,
+                    selected_camera_id.as_deref(),
+                    settings.width,
+                    settings.height,
+                    settings.fps,
                     &status,
                     preview.as_ref(),
                     &mut last_preview,
@@ -308,15 +416,7 @@ fn recorder_thread(
         }
     }
     finish_recording(&mut recording, &mut active_paths, &status);
-    if let Some(active) = frame_reader {
-        if active.started {
-            let _ = active
-                .reader
-                .StopAsync()
-                .and_then(|operation| operation.join());
-        }
-        let _ = active.reader.Close();
-    }
+    stop_preview_reader(&mut frame_reader);
     unsafe { CoUninitialize() };
 }
 
@@ -511,6 +611,10 @@ fn wasapi_audio_thread(
 fn publish_preview_if_needed(
     capture: &Option<MediaCapture>,
     reader: &mut Option<PreviewReader>,
+    camera_id: Option<&str>,
+    width: u32,
+    height: u32,
+    fps: u32,
     status: &Arc<RwLock<RuntimeStatus>>,
     publisher: Option<&PreviewPublisher>,
     last_preview: &mut Instant,
@@ -520,7 +624,8 @@ fn publish_preview_if_needed(
         update(status, |s| s.preview_status = "idle".into());
         return;
     }
-    if publisher.is_none() || last_preview.elapsed() < Duration::from_millis(33) {
+    let frame_interval = Duration::from_millis((1000 / u64::from(fps.clamp(1, 60))).max(1));
+    if publisher.is_none() || last_preview.elapsed() < frame_interval {
         return;
     }
     *last_preview = Instant::now();
@@ -528,7 +633,7 @@ fn publish_preview_if_needed(
         match capture
             .as_ref()
             .context("camera is not initialized")
-            .and_then(|_| create_shared_preview_reader())
+            .and_then(|_| create_shared_preview_reader(camera_id, width, height))
         {
             Ok(active) => {
                 *reader = Some(active);
@@ -604,13 +709,17 @@ fn publish_preview_if_needed(
     }
 }
 
-fn create_shared_preview_reader() -> Result<PreviewReader> {
+fn create_shared_preview_reader(
+    camera_id: Option<&str>,
+    width: u32,
+    height: u32,
+) -> Result<PreviewReader> {
     let capture = MediaCapture::new()?;
     let initialization = MediaCaptureInitializationSettings::new()?;
     initialization.SetStreamingCaptureMode(StreamingCaptureMode::Video)?;
     initialization.SetMemoryPreference(MediaCaptureMemoryPreference::Cpu)?;
     initialization.SetSharingMode(MediaCaptureSharingMode::SharedReadOnly)?;
-    if let Some(group) = preferred_source_group()? {
+    if let Some((group, _)) = preferred_source_group(camera_id)? {
         initialization.SetSourceGroup(&group)?;
     }
     capture
@@ -631,8 +740,8 @@ fn create_shared_preview_reader() -> Result<PreviewReader> {
             &source,
             &HSTRING::from("BGRA8"),
             BitmapSize {
-                Width: 1280,
-                Height: 720,
+                Width: width,
+                Height: height,
             },
         )?
         .join()?;
@@ -646,7 +755,16 @@ fn create_shared_preview_reader() -> Result<PreviewReader> {
 
 fn encode_jpeg(bitmap: &windows::Graphics::Imaging::SoftwareBitmap) -> Result<Vec<u8>> {
     let stream = InMemoryRandomAccessStream::new()?;
-    let encoder = BitmapEncoder::CreateAsync(BitmapEncoder::JpegEncoderId()?, &stream)?.join()?;
+    let options = BitmapPropertySet::new()?;
+    let quality =
+        BitmapTypedValue::Create(&PropertyValue::CreateSingle(0.75)?, PropertyType::Single)?;
+    options.Insert(&HSTRING::from("ImageQuality"), &quality)?;
+    let encoder = BitmapEncoder::CreateWithEncodingOptionsAsync(
+        BitmapEncoder::JpegEncoderId()?,
+        &stream,
+        &options,
+    )?
+    .join()?;
     encoder.SetSoftwareBitmap(bitmap)?;
     encoder.FlushAsync()?.join()?;
     let size: u32 = stream
@@ -676,6 +794,8 @@ struct StartedRecording {
 fn start_recording(
     settings: &Settings,
     capture: &mut Option<MediaCapture>,
+    camera_id: Option<&str>,
+    status: &Arc<RwLock<RuntimeStatus>>,
 ) -> Result<StartedRecording> {
     fs::create_dir_all(&settings.recording_root)?;
     let free = available_space(&settings.recording_root)?;
@@ -684,7 +804,7 @@ fn start_recording(
     }
     prune_expired_recordings(&settings.recording_root, settings.retention_days)?;
 
-    ensure_capture(capture)?;
+    ensure_capture(capture, camera_id, status)?;
 
     match prepare_recording(
         capture.as_ref().expect("capture initialized"),
@@ -712,16 +832,30 @@ fn start_recording(
     }
 }
 
-fn ensure_capture(capture: &mut Option<MediaCapture>) -> Result<()> {
+fn ensure_capture(
+    capture: &mut Option<MediaCapture>,
+    camera_id: Option<&str>,
+    status: &Arc<RwLock<RuntimeStatus>>,
+) -> Result<()> {
     if capture.is_some() {
         return Ok(());
     }
     let native = MediaCapture::new()?;
     let initialization = MediaCaptureInitializationSettings::new()?;
-    initialization.SetStreamingCaptureMode(StreamingCaptureMode::AudioAndVideo)?;
     initialization.SetMemoryPreference(MediaCaptureMemoryPreference::Auto)?;
-    if let Some(group) = preferred_source_group()? {
+    if let Some((group, device)) = preferred_source_group(camera_id)? {
+        initialization.SetStreamingCaptureMode(if device.has_microphone {
+            StreamingCaptureMode::AudioAndVideo
+        } else {
+            StreamingCaptureMode::Video
+        })?;
         initialization.SetSourceGroup(&group)?;
+        update(status, |s| {
+            s.camera_id = device.id.clone();
+            s.camera_name = device.name.clone();
+        });
+    } else {
+        anyhow::bail!("no camera is available");
     }
     native
         .InitializeWithSettingsAsync(&initialization)?
@@ -730,9 +864,39 @@ fn ensure_capture(capture: &mut Option<MediaCapture>) -> Result<()> {
     Ok(())
 }
 
-fn preferred_source_group() -> Result<Option<MediaFrameSourceGroup>> {
+fn list_camera_devices() -> Result<Vec<CameraDevice>> {
+    Ok(camera_source_groups()?
+        .into_iter()
+        .map(|(_, device)| device)
+        .collect())
+}
+
+fn find_camera(camera_id: &str) -> Result<CameraDevice> {
+    camera_source_groups()?
+        .into_iter()
+        .find(|(_, device)| device.id == camera_id)
+        .map(|(_, device)| device)
+        .with_context(|| format!("camera is no longer available: {camera_id}"))
+}
+
+fn preferred_source_group(
+    camera_id: Option<&str>,
+) -> Result<Option<(MediaFrameSourceGroup, CameraDevice)>> {
+    let groups = camera_source_groups()?;
+    if let Some(camera_id) = camera_id {
+        return groups
+            .into_iter()
+            .find(|(_, device)| device.id == camera_id)
+            .map(Some)
+            .with_context(|| format!("camera is no longer available: {camera_id}"));
+    }
+    Ok(groups.into_iter().next())
+}
+
+fn camera_source_groups() -> Result<Vec<(MediaFrameSourceGroup, CameraDevice)>> {
     let groups = MediaFrameSourceGroup::FindAllAsync()?.join()?;
-    let mut color_only = None;
+    let mut with_audio = Vec::new();
+    let mut color_only = Vec::new();
     for group in groups {
         let mut has_color = false;
         let mut has_audio = false;
@@ -743,14 +907,33 @@ fn preferred_source_group() -> Result<Option<MediaFrameSourceGroup>> {
                 _ => {}
             }
         }
-        if has_color && has_audio {
-            return Ok(Some(group));
-        }
-        if has_color && color_only.is_none() {
-            color_only = Some(group);
+        if has_color {
+            let device = CameraDevice {
+                id: group.Id()?.to_string(),
+                name: group.DisplayName()?.to_string(),
+                has_microphone: has_audio,
+            };
+            if has_audio {
+                with_audio.push((group, device));
+            } else {
+                color_only.push((group, device));
+            }
         }
     }
-    Ok(color_only)
+    with_audio.extend(color_only);
+    Ok(with_audio)
+}
+
+fn stop_preview_reader(reader: &mut Option<PreviewReader>) {
+    if let Some(active) = reader.take() {
+        if active.started {
+            let _ = active
+                .reader
+                .StopAsync()
+                .and_then(|operation| operation.join());
+        }
+        let _ = active.reader.Close();
+    }
 }
 
 fn prepare_recording(

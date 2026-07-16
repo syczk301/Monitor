@@ -22,6 +22,9 @@ pub enum RecordingMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub camera_id: String,
+    pub selected_camera_key: String,
+    pub remote_nodes: Vec<RemoteNode>,
     pub recording_mode: RecordingMode,
     pub recording_root: PathBuf,
     pub legacy_recording_roots: Vec<PathBuf>,
@@ -37,6 +40,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            camera_id: String::new(),
+            selected_camera_key: String::new(),
+            remote_nodes: Vec::new(),
             recording_mode: RecordingMode::Continuous,
             recording_root: PathBuf::from(r"F:\monitor"),
             legacy_recording_roots: vec![PathBuf::from(r"D:\download\Monitor")],
@@ -49,6 +55,12 @@ impl Default for Settings {
             ai_enabled: false,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteNode {
+    pub name: String,
+    pub address: String,
 }
 
 #[derive(Clone, Debug)]
