@@ -109,10 +109,10 @@ fun MonitorScreen(
     LaunchedEffect(api) {
         runCatching {
             val capture = api.getCaptureInfo()
-            if (capture.requestedWidth != 3840 || capture.requestedHeight != 2160) {
+            if (capture.requestedWidth != 1920 || capture.requestedHeight != 1080) {
                 api.applyCameraSettings(
-                    width = 3840,
-                    height = 2160,
+                    width = 1920,
+                    height = 1080,
                     fps = capture.targetFps.coerceIn(5, 60)
                 )
             }
