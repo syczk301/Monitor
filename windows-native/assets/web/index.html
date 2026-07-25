@@ -204,63 +204,6 @@
       color: var(--text-muted);
     }
 
-    .roi-configs {
-      margin-top: 18px;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 14px;
-    }
-
-    .roi-panel-empty {
-      margin-top: 16px;
-      padding: 14px 16px;
-      border-radius: 12px;
-      background: rgba(15, 23, 42, 0.48);
-      border: 1px dashed rgba(148, 163, 184, 0.3);
-      color: var(--text-muted);
-      font-size: 0.9rem;
-    }
-
-    .roi-panel {
-      display: grid;
-      gap: 8px;
-      padding: 12px;
-      border-radius: 12px;
-      background: rgba(15, 23, 42, 0.78);
-      border: 1px solid rgba(16, 185, 129, 0.22);
-    }
-
-    .roi-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .roi-panel-title { font-size: 0.82rem; font-weight: 700; color: #d1fae5; }
-    .roi-panel-badge { font-size: 0.72rem; color: var(--text-muted); }
-    .roi-panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-
-    .roi-panel label { display: grid; gap: 4px; font-size: 0.7rem; color: #d1fae5; }
-
-    .roi-panel input {
-      width: 100%;
-      box-sizing: border-box;
-      min-height: 32px;
-      padding: 5px 7px;
-      border-radius: 6px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(15, 23, 42, 0.92);
-      color: var(--text);
-      font-size: 0.72rem;
-    }
-
-    .roi-panel button {
-      border: none;
-      border-radius: 6px;
-      background: #10b981;
-      color: white;
-      min-height: 32px;
-      padding: 6px 8px;
-      font-size: 0.72rem;
-      font-weight: 600;
-      cursor: pointer;
-    }
-
     .roi-tag {
       position: absolute;
       left: 0;
@@ -406,57 +349,6 @@
       font-size: 0.85rem;
     }
 
-    /* -- ROI section -- */
-    body.app-shell .roi-section {
-      padding: 0 16px 16px;
-    }
-
-    body.app-shell .roi-section h2 {
-      font-size: 0.7rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      color: var(--text-muted);
-      margin: 4px 0 12px 4px;
-      display: block;
-    }
-
-    body.app-shell .roi-section h2::before { display: none; }
-
-    body.app-shell .roi-configs {
-      grid-template-columns: 1fr;
-      gap: 10px;
-      margin-top: 0;
-    }
-
-    body.app-shell .roi-panel {
-      border-radius: 14px;
-      padding: 14px;
-      background: rgba(30, 41, 59, 0.5);
-      border-color: rgba(16, 185, 129, 0.15);
-    }
-
-    body.app-shell .roi-panel input {
-      min-height: 38px;
-      border-radius: 10px;
-      font-size: 0.82rem;
-      padding: 8px 10px;
-    }
-
-    body.app-shell .roi-panel button {
-      min-height: 40px;
-      border-radius: 10px;
-      font-size: 0.82rem;
-    }
-
-    body.app-shell .roi-panel-empty {
-      border-radius: 14px;
-      text-align: center;
-      padding: 20px 16px;
-      font-size: 0.85rem;
-      margin-top: 0;
-    }
-
     body.app-shell #stream-error {
       padding: 0 16px;
       font-size: 0.82rem;
@@ -521,17 +413,12 @@
     .activity-copy strong { display:block; font-size:15px; }
     .activity-copy small { color:#7a818c; }
     .activity-empty { padding:34px 4px; color:#858c96; text-align:center; border-top:1px solid #dfe2e7; font-size:13px; }
-    .settings-panel,.roi-section { margin-top:22px; padding:18px; background:#fff; border:1px solid #e0e2e7; border-radius:9px; }
+    .settings-panel { margin-top:22px; padding:18px; background:#fff; border:1px solid #e0e2e7; border-radius:9px; }
     .settings-grid { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; }
     .settings-grid label { display:grid; gap:6px; font-size:12px; color:#69707d; }
     .settings-grid select { border:1px solid #d7dae1; border-radius:7px; padding:10px; background:#fff; color:#252932; }
     #cam-apply { border:0; border-radius:7px; background:#4f46e5; color:#fff; padding:11px 18px; font-weight:650; }
     .status-copy { color:#7a818c; font-size:12px; margin:8px 0 0; }
-    .roi-section h2 { font-size:16px; margin:0 0 12px!important; }
-    .roi-configs { margin-top:0; }
-    .roi-panel,.roi-panel-empty { background:#f8f9fb; color:#69707d; border-color:#daddE4; }
-    .roi-panel-title,.roi-panel label { color:#242832; }
-    .roi-panel input { background:#fff; color:#242832; border-color:#d7dae1; }
     .app-float-bar { display:none; }
     @media(max-width:1050px){.shell{grid-template-columns:76px 1fr}.side-link span{display:none}.side-link{justify-content:center}.dashboard{grid-template-columns:1fr}.metric-strip{grid-template-columns:repeat(3,1fr)}}
     @media(max-width:680px){.shell{display:block}.side-nav{height:auto;position:relative;flex-direction:row}.brand{width:70px;height:64px}.brand img{width:42px;height:42px}.side-link{padding:18px 12px}.side-bottom{margin-left:auto;border:0}.topbar{height:auto;padding:16px;flex-wrap:wrap;gap:12px}.topbar h1{font-size:19px}.site-select{min-width:0}.dashboard{padding:18px 14px;gap:24px}.metric-strip{grid-template-columns:repeat(2,1fr)}.camera-toolbar{overflow-x:auto}.activity-row{grid-template-columns:65px 30px 1fr}}
@@ -560,7 +447,6 @@
           <div class="metric-strip"><div class="metric"><span>当前在场</span><strong id="targets" class="primary">--</strong></div><div class="metric"><span>录像</span><strong>已开启</strong></div><div class="metric"><span>帧率</span><strong id="fps">--</strong></div><div class="metric"><span>延迟</span><strong id="latency">--</strong></div><div class="metric"><span>GPU</span><strong id="gpu">--</strong></div><div class="metric"><span>设备</span><strong id="capture-status">--</strong><span id="capture-backend" style="display:none">--</span></div></div>
           <p id="audio-status" class="status-copy">声音默认关闭。</p><p id="record-status" class="status-copy">录像保存到 D:\download\Monitor。</p>
           <section id="camera-settings" class="settings-panel"><h2 class="section-title" style="font-size:16px">摄像头设置</h2><div class="settings-grid"><label>分辨率<select id="cam-res"><option value="640x480">480p</option><option value="1280x720">720p</option><option value="1920x1080">1080p</option><option value="2560x1440">1440p</option><option value="3840x2160" selected>4K</option></select></label><label>目标帧率<select id="cam-fps"><option value="5">5 FPS</option><option value="15">15 FPS</option><option value="30" selected>30 FPS</option><option value="60">60 FPS</option></select></label><button id="cam-apply" type="button">应用设置</button></div><p id="cam-msg" class="status-copy"></p></section>
-          <section class="roi-section"><h2>区域检测参数</h2><div id="roi-configs" class="roi-configs"></div></section>
         </section>
         <aside class="activity-column"><div class="activity-head"><h2 class="section-title">今天动态</h2><span id="activity-date" class="activity-date">--</span></div><div id="activity-list" class="activity-list"><div class="activity-empty">正在加载实际记录...</div></div></aside>
       </div>
@@ -596,7 +482,6 @@
     const streamLayer = document.getElementById("roi-layer");
     const streamContainer = document.getElementById("stream-container");
     const streamWrapper = document.getElementById("stream-wrapper");
-    const roiConfigs = document.getElementById("roi-configs");
     let roiDrawEnabled = false;
 
     let scale = 1;
@@ -926,15 +811,8 @@
         syncStreamViewport();
 
         Array.from(streamLayer.children).forEach(c => { if (c.id !== "temp-roi") c.remove(); });
-        roiConfigs.innerHTML = "";
-
-        if (!rois.length) {
-          roiConfigs.innerHTML = `<div class="roi-panel-empty">还没有重点检测区域。点击"区域圈选"后，在画面上框选一个 ROI。</div>`;
-        }
-
         rois.forEach((roi, index) => {
           const [x1, y1, x2, y2] = roi.bbox;
-          const params = roi.params || {};
           const box = document.createElement("div");
           box.className = "roi-box";
           Object.assign(box.style, {
@@ -954,23 +832,6 @@
           box.appendChild(delBtn);
           streamLayer.appendChild(box);
 
-          const panel = document.createElement("div");
-          panel.className = "roi-panel";
-          panel.innerHTML = `
-            <div class="roi-panel-head">
-              <div class="roi-panel-title">ROI ${index+1}</div>
-              <div class="roi-panel-badge">${x2-x1} x ${y2-y1}</div>
-            </div>
-            <div class="roi-panel-grid">
-              <label>阈值<input id="roi-conf-${roi.id}" type="number" min="0.01" max="0.99" step="0.01" value="${Number(params.confidence ?? 0.18).toFixed(2)}" /></label>
-              <label>分辨率<input id="roi-imgsz-${roi.id}" type="number" min="320" max="1920" step="32" value="${params.imgsz ?? 960}" /></label>
-              <label>放大倍率<input id="roi-up-${roi.id}" type="number" min="1" max="6" step="0.1" value="${Number(params.upscale_factor ?? 3.0).toFixed(1)}" /></label>
-              <label>增强放大<input id="roi-up2-${roi.id}" type="number" min="1" max="8" step="0.1" value="${Number(params.enhanced_upscale_factor ?? 3.5).toFixed(1)}" /></label>
-            </div>
-            <button type="button">保存 ROI ${index+1} 参数</button>
-          `;
-          panel.querySelector("button").onclick = () => saveRoiParams(roi);
-          roiConfigs.appendChild(panel);
         });
       } catch (e) { }
     }
@@ -984,24 +845,6 @@
       loadRois();
     }
     setInterval(loadRois, 5000);
-
-    async function saveRoiParams(roi) {
-      const gv = (id) => document.getElementById(id).value;
-      await fetch(`/api/rois/${roi.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bbox: roi.bbox,
-          params: {
-            confidence: parseFloat(gv(`roi-conf-${roi.id}`)),
-            imgsz: parseInt(gv(`roi-imgsz-${roi.id}`), 10),
-            upscale_factor: parseFloat(gv(`roi-up-${roi.id}`)),
-            enhanced_upscale_factor: parseFloat(gv(`roi-up2-${roi.id}`)),
-          }
-        })
-      });
-      await loadRois();
-    }
 
     async function pullStats() {
       try {
