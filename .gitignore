@@ -21,7 +21,11 @@ android-app/app/build/
 android-app/local.properties
 android-app/keystore.properties
 android-app/signing/
+android-app/dist/*.apk
 
 # Rust native Windows application
 windows-native/target/
 windows-native/dist/*.pdb
+windows-native/dist/*.zip
+windows-native/dist/*.exe
+windows-native/dist/**/*.exe
