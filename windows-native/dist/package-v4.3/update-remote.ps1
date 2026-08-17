@@ -145,4 +145,9 @@ if (-not $healthy) {
     throw "V4.3 started and saved $targetBind, but its health endpoint is not reachable. Check whether $targetIp is assigned to this computer and allow inbound TCP 8000 in Windows Firewall."
 }
 
+if ([string]::IsNullOrWhiteSpace([string]$health.computer_name)) {
+    throw 'V4.3 is reachable, but it did not report the Windows computer name.'
+}
+
+Write-Host "Detected Windows computer name: $($health.computer_name)"
 Write-Host "Update complete. Dashboard: http://$targetBind"

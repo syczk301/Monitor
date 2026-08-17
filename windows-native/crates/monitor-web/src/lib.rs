@@ -176,6 +176,7 @@ async fn health(State(state): State<WebState>) -> Json<Value> {
     Json(json!({
         "status": if runtime.last_error.is_empty() { "ok" } else { "degraded" },
         "runtime": "rust-native",
+        "computer_name": computer_name(),
         "fps": runtime.fps,
         "inference_fps": 0.0,
         "latency_ms": 0.0,
@@ -223,24 +224,32 @@ async fn cameras(State(state): State<WebState>) -> Response {
     };
     let runtime = state.runtime.read().expect("runtime poisoned").clone();
     let settings = state.settings.read().expect("settings poisoned").clone();
+    let local_computer_name = computer_name();
     let mut devices: Vec<CameraOption> = local_devices
         .into_iter()
         .map(|device| CameraOption {
             id: format!("local:{}", device.id),
-            name: format!("本机 · {}", device.name),
+            name: camera_display_name(&local_computer_name, &device.name),
             source: "local",
             online: true,
             stream_url: "/stream".into(),
             audio_url: "/api/audio/pcm".into(),
         })
         .collect();
+    let mut discovered_names = Vec::new();
     for (node_index, node) in settings.remote_nodes.iter().enumerate() {
+        let remote_computer_name = fetch_remote_computer_name(node)
+            .await
+            .unwrap_or_else(|| node.name.clone());
+        if remote_computer_name != node.name {
+            discovered_names.push((node.address.clone(), remote_computer_name.clone()));
+        }
         match fetch_remote_cameras(node).await {
             Ok(remote_devices) if !remote_devices.is_empty() => {
                 let remote_devices = prefer_physical_cameras(remote_devices);
                 devices.extend(remote_devices.into_iter().map(|device| CameraOption {
                     id: format!("remote:{node_index}:{}", device.id),
-                    name: format!("{} · {}", node.name, device.name),
+                    name: camera_display_name(&remote_computer_name, &device.name),
                     source: "remote",
                     online: true,
                     stream_url: format!("/api/remote_stream/{node_index}"),
@@ -249,13 +258,18 @@ async fn cameras(State(state): State<WebState>) -> Response {
             }
             _ => devices.push(CameraOption {
                 id: format!("remote:{node_index}:"),
-                name: format!("{} · 摄像头（离线）", node.name),
+                name: camera_display_name(&remote_computer_name, "摄像头（离线）"),
                 source: "remote",
                 online: false,
                 stream_url: format!("/api/remote_stream/{node_index}"),
                 audio_url: format!("/api/remote_audio/{node_index}"),
             }),
         }
+    }
+    if !discovered_names.is_empty()
+        && let Err(error) = persist_remote_computer_names(&state, &discovered_names)
+    {
+        tracing::warn!(%error, "failed to persist discovered remote computer names");
     }
     let local_selected = if runtime.camera_id.is_empty() {
         settings.camera_id.clone()
@@ -327,7 +341,7 @@ async fn select_camera(
             };
         CameraOption {
             id: camera_key.clone(),
-            name: format!("本机 · {}", device.name),
+            name: camera_display_name(&computer_name(), &device.name),
             source: "local",
             online: true,
             stream_url: "/stream".into(),
@@ -361,7 +375,7 @@ async fn select_camera(
             )
                 .into_response();
         }
-        let name = fetch_remote_cameras(&node)
+        let camera_name = fetch_remote_cameras(&node)
             .await
             .ok()
             .and_then(|devices| {
@@ -371,9 +385,12 @@ async fn select_camera(
             })
             .map(|device| device.name)
             .unwrap_or_else(|| "摄像头".into());
+        let remote_computer_name = fetch_remote_computer_name(&node)
+            .await
+            .unwrap_or_else(|| node.name.clone());
         CameraOption {
             id: camera_key.clone(),
-            name: format!("{} · {name}", node.name),
+            name: camera_display_name(&remote_computer_name, &camera_name),
             source: "remote",
             online: true,
             stream_url: format!("/api/remote_stream/{node_index}"),
@@ -607,6 +624,63 @@ async fn fetch_remote_cameras(node: &RemoteNode) -> Result<Vec<monitor_media::Ca
         }]);
     }
     anyhow::bail!("remote health returned {status}")
+}
+
+fn computer_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Windows 电脑".to_owned())
+}
+
+fn camera_display_name(computer_name: &str, camera_name: &str) -> String {
+    format!("{} · {}", computer_name.trim(), camera_name.trim())
+}
+
+async fn fetch_remote_computer_name(node: &RemoteNode) -> Option<String> {
+    let (_, initial, status, _) = open_remote_response(node, "GET", "/api/health", None)
+        .await
+        .ok()?;
+    if status != 200 || initial.len() > 1024 * 1024 {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&initial).ok()?;
+    value
+        .get("computer_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn persist_remote_computer_names(
+    state: &WebState,
+    discovered_names: &[(String, String)],
+) -> Result<()> {
+    {
+        let mut settings = state.settings.write().expect("settings poisoned");
+        for (address, computer_name) in discovered_names {
+            if let Some(node) = settings
+                .remote_nodes
+                .iter_mut()
+                .find(|node| node.address == *address)
+            {
+                node.name = computer_name.clone();
+            }
+        }
+    }
+    let mut persisted = load_or_create_settings(&state.paths)?;
+    for (address, computer_name) in discovered_names {
+        if let Some(node) = persisted
+            .remote_nodes
+            .iter_mut()
+            .find(|node| node.address == *address)
+        {
+            node.name = computer_name.clone();
+        }
+    }
+    save_settings_atomic(&state.paths, &persisted)
 }
 
 async fn select_remote_camera(node: &RemoteNode, camera_id: &str) -> Result<()> {
@@ -1302,5 +1376,13 @@ mod tests {
     fn dashboard_is_embedded() {
         assert!(INDEX_HTML.contains("/stream"));
         assert!(RECORDINGS_HTML.contains("video"));
+    }
+
+    #[test]
+    fn camera_name_uses_computer_name() {
+        assert_eq!(
+            camera_display_name("DESKTOP-CAMERA", "USB Camera"),
+            "DESKTOP-CAMERA · USB Camera"
+        );
     }
 }
