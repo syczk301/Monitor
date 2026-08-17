@@ -113,6 +113,8 @@ fn apply_environment_overrides(settings: &mut monitor_storage::Settings) {
     if let Ok(mode) = env::var("CAMERA_MONITOR_MODE") {
         settings.recording_mode = if mode.eq_ignore_ascii_case("off") {
             RecordingMode::Off
+        } else if mode.eq_ignore_ascii_case("schedule") {
+            RecordingMode::Schedule
         } else {
             RecordingMode::Continuous
         };

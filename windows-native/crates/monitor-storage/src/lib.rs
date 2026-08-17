@@ -17,6 +17,65 @@ use std::{
 pub enum RecordingMode {
     Off,
     Continuous,
+    Schedule,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RecordingSchedule {
+    /// 每日开始时刻，格式 HH:MM
+    pub start: String,
+    /// 每日结束时刻，格式 HH:MM；小于等于 start 时跨午夜
+    pub end: String,
+    /// 启用的星期（ISO：1=周一 … 7=周日），空表示每天
+    pub days: Vec<u8>,
+}
+
+impl Default for RecordingSchedule {
+    fn default() -> Self {
+        Self {
+            start: "00:00".into(),
+            end: "23:59".into(),
+            days: Vec::new(),
+        }
+    }
+}
+
+impl RecordingSchedule {
+    pub fn parse_minutes(value: &str) -> Option<u32> {
+        let (hour, minute) = value.split_once(':')?;
+        let hour: u32 = hour.parse().ok()?;
+        let minute: u32 = minute.parse().ok()?;
+        (hour < 24 && minute < 60).then_some(hour * 60 + minute)
+    }
+
+    pub fn is_valid(&self) -> bool {
+        Self::parse_minutes(&self.start).is_some()
+            && Self::parse_minutes(&self.end).is_some()
+            && self.days.iter().all(|day| (1..=7).contains(day))
+    }
+
+    /// 判断本地时间（ISO 星期 + 当日分钟数）是否落在录制时段内，支持跨午夜时段。
+    pub fn contains(&self, weekday_iso: u8, minute_of_day: u32) -> bool {
+        let (Some(start), Some(end)) = (
+            Self::parse_minutes(&self.start),
+            Self::parse_minutes(&self.end),
+        ) else {
+            return false;
+        };
+        if start == end {
+            return false;
+        }
+        let day_enabled =
+            |day: u8| self.days.is_empty() || self.days.contains(&day);
+        if start < end {
+            day_enabled(weekday_iso) && minute_of_day >= start && minute_of_day < end
+        } else {
+            let previous_day = if weekday_iso <= 1 { 7 } else { weekday_iso - 1 };
+            (day_enabled(weekday_iso) && minute_of_day >= start)
+                || (day_enabled(previous_day) && minute_of_day < end)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -26,6 +85,7 @@ pub struct Settings {
     pub selected_camera_key: String,
     pub remote_nodes: Vec<RemoteNode>,
     pub recording_mode: RecordingMode,
+    pub recording_schedule: RecordingSchedule,
     pub recording_root: PathBuf,
     pub legacy_recording_roots: Vec<PathBuf>,
     pub retention_days: u32,
@@ -44,6 +104,7 @@ impl Default for Settings {
             selected_camera_key: String::new(),
             remote_nodes: Vec::new(),
             recording_mode: RecordingMode::Continuous,
+            recording_schedule: RecordingSchedule::default(),
             recording_root: PathBuf::from(r"F:\monitor"),
             legacy_recording_roots: vec![PathBuf::from(r"D:\download\Monitor")],
             retention_days: 30,
@@ -385,6 +446,47 @@ mod tests {
         assert_eq!(s.recording_mode, RecordingMode::Continuous);
         assert_eq!((s.width, s.height, s.fps), (1920, 1080, 30));
         assert_eq!(s.recording_root, PathBuf::from(r"F:\monitor"));
+    }
+
+    #[test]
+    fn schedule_contains_daytime_window() {
+        let schedule = RecordingSchedule {
+            start: "08:30".into(),
+            end: "18:00".into(),
+            days: vec![1, 2, 3, 4, 5],
+        };
+        assert!(schedule.is_valid());
+        assert!(schedule.contains(1, 8 * 60 + 30));
+        assert!(schedule.contains(5, 17 * 60 + 59));
+        assert!(!schedule.contains(1, 18 * 60));
+        assert!(!schedule.contains(6, 10 * 60));
+    }
+
+    #[test]
+    fn schedule_contains_overnight_window() {
+        let schedule = RecordingSchedule {
+            start: "22:00".into(),
+            end: "06:00".into(),
+            days: vec![7],
+        };
+        // 周日晚上进入时段
+        assert!(schedule.contains(7, 23 * 60));
+        // 周一凌晨仍属于周日的跨午夜时段
+        assert!(schedule.contains(1, 5 * 60));
+        assert!(!schedule.contains(1, 6 * 60));
+        assert!(!schedule.contains(3, 23 * 60));
+    }
+
+    #[test]
+    fn schedule_rejects_invalid_values() {
+        let mut schedule = RecordingSchedule::default();
+        schedule.start = "24:00".into();
+        assert!(!schedule.is_valid());
+        schedule.start = "08:00".into();
+        schedule.days = vec![0];
+        assert!(!schedule.is_valid());
+        assert!(RecordingSchedule::parse_minutes("7:5") == Some(7 * 60 + 5));
+        assert!(RecordingSchedule::parse_minutes("aa:bb").is_none());
     }
 
     #[test]

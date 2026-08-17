@@ -130,6 +130,31 @@ class MonitorApiService(
         )
     }
 
+    private fun parseCamera(j: JSONObject): CameraDevice = CameraDevice(
+        id = j.optString("id", ""),
+        name = j.optString("name", "摄像头"),
+        source = j.optString("source", "local"),
+        online = j.optBoolean("online", false),
+        streamUrl = j.optString("stream_url", "/stream"),
+        audioUrl = j.optString("audio_url", "/api/audio/pcm")
+    )
+
+    suspend fun getCameras(): CameraList {
+        val j = JSONObject(get("/api/cameras"))
+        val arr = j.optJSONArray("cameras") ?: JSONArray()
+        return CameraList(
+            cameras = (0 until arr.length()).map { parseCamera(arr.getJSONObject(it)) },
+            selectedId = j.optString("selected_id", "")
+        )
+    }
+
+    suspend fun selectCamera(cameraId: String): CameraDevice {
+        val j = JSONObject(post("/api/cameras", JSONObject().put("camera_id", cameraId)))
+        val selected = j.optJSONObject("selected")
+            ?: throw Exception("后端未返回已选择的摄像头")
+        return parseCamera(selected)
+    }
+
     suspend fun getVisits(limit: Int = 200): List<Visit> {
         val raw = get("/api/visits?limit=$limit")
         val arr = JSONArray(raw)
@@ -224,6 +249,45 @@ class MonitorApiService(
         }
     }
 
+    private fun parseRecordingStatus(raw: String): RecordingStatus {
+        val j = JSONObject(raw)
+        val s = j.optJSONObject("schedule")
+        val days = mutableListOf<Int>()
+        val arr = s?.optJSONArray("days")
+        if (arr != null) {
+            for (i in 0 until arr.length()) days.add(arr.getInt(i))
+        }
+        return RecordingStatus(
+            mode = j.optString("mode", "off"),
+            schedule = RecordingSchedule(
+                start = s?.optString("start", "00:00") ?: "00:00",
+                end = s?.optString("end", "23:59") ?: "23:59",
+                days = days
+            ),
+            scheduleInWindow = j.optBoolean("schedule_in_window", false),
+            recordingActive = j.optBoolean("recording_active", false),
+            recordingStatus = j.optString("recording_status", "-")
+        )
+    }
+
+    suspend fun getRecordingStatus(): RecordingStatus =
+        parseRecordingStatus(get("/api/recording_schedule"))
+
+    suspend fun setRecordingMode(mode: String) {
+        post("/api/recording_mode", JSONObject().put("mode", mode))
+    }
+
+    suspend fun setRecordingSchedule(schedule: RecordingSchedule): RecordingStatus {
+        val raw = post(
+            "/api/recording_schedule",
+            JSONObject()
+                .put("start", schedule.start)
+                .put("end", schedule.end)
+                .put("days", JSONArray(schedule.days))
+        )
+        return parseRecordingStatus(raw)
+    }
+
     suspend fun downloadRecording(relativePath: String, cacheDir: File): File {
         val recordingsDir = File(cacheDir, "recordings").apply { mkdirs() }
         val target = File(recordingsDir, relativePath.substringAfterLast('/'))
@@ -233,8 +297,16 @@ class MonitorApiService(
         return target
     }
 
-    fun streamUrl(): String = "$baseUrl/stream"
-    fun audioUrl(): String = "$baseUrl/api/audio/pcm"
+    private fun endpointUrl(path: String): String {
+        if (path.startsWith("http://") || path.startsWith("https://")) return path
+        return baseUrl.trimEnd('/') + "/" + path.trimStart('/')
+    }
+
+    fun streamUrl(camera: CameraDevice? = null): String =
+        endpointUrl(camera?.streamUrl ?: "/stream")
+
+    fun audioUrl(camera: CameraDevice? = null): String =
+        endpointUrl(camera?.audioUrl ?: "/api/audio/pcm")
     fun recordingUrl(relativePath: String): String =
         baseUrl.toHttpUrl().newBuilder()
             .addPathSegments("api/recordings/file")

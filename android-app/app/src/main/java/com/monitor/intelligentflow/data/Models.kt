@@ -20,6 +20,20 @@ data class CaptureInfo(
     val captureBackend: String = "-"
 )
 
+data class CameraDevice(
+    val id: String,
+    val name: String,
+    val source: String,
+    val online: Boolean,
+    val streamUrl: String,
+    val audioUrl: String
+)
+
+data class CameraList(
+    val cameras: List<CameraDevice> = emptyList(),
+    val selectedId: String = ""
+)
+
 data class Visit(
     val id: Int,
     val personId: String,
@@ -74,4 +88,24 @@ data class RecordingFile(
 data class RecordingGroup(
     val day: String,
     val items: List<RecordingFile>
+)
+
+data class RecordingSchedule(
+    val start: String = "00:00",
+    val end: String = "23:59",
+    val days: List<Int> = emptyList()
+) {
+    fun daysText(): String {
+        if (days.isEmpty()) return "每天"
+        val names = mapOf(1 to "周一", 2 to "周二", 3 to "周三", 4 to "周四", 5 to "周五", 6 to "周六", 7 to "周日")
+        return days.sorted().joinToString("、") { names[it] ?: it.toString() }
+    }
+}
+
+data class RecordingStatus(
+    val mode: String = "off",
+    val schedule: RecordingSchedule = RecordingSchedule(),
+    val scheduleInWindow: Boolean = false,
+    val recordingActive: Boolean = false,
+    val recordingStatus: String = "-"
 )

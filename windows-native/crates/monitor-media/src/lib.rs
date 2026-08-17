@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::{Datelike, Local, Timelike};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use fs2::available_space;
-use monitor_storage::{RecordingMode, Settings};
+use monitor_storage::{RecordingMode, RecordingSchedule, Settings};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -110,7 +110,8 @@ impl RuntimeStatus {
 
 enum RecorderCommand {
     SetMode(RecordingMode),
-    SetCaptureSettings(u32, u32, u32, Sender<Result<()>>),
+    SetSchedule(RecordingSchedule),
+    SetCaptureSettings(u32, u32, u32, u32, Sender<Result<()>>),
     ListCameras(Sender<Result<Vec<CameraDevice>>>),
     SelectCamera(String, Sender<Result<CameraDevice>>),
     Shutdown,
@@ -136,6 +137,11 @@ impl MediaController {
         Ok(())
     }
 
+    pub fn set_schedule(&self, schedule: RecordingSchedule) -> Result<()> {
+        self.commands.send(RecorderCommand::SetSchedule(schedule))?;
+        Ok(())
+    }
+
     pub fn list_cameras(&self) -> Result<Vec<CameraDevice>> {
         let (sender, receiver) = bounded(1);
         self.commands.send(RecorderCommand::ListCameras(sender))?;
@@ -153,10 +159,16 @@ impl MediaController {
             .context("camera selection timed out")?
     }
 
-    pub fn set_capture_settings(&self, width: u32, height: u32, fps: u32) -> Result<()> {
+    pub fn set_capture_settings(
+        &self,
+        width: u32,
+        height: u32,
+        fps: u32,
+        bitrate: u32,
+    ) -> Result<()> {
         let (sender, receiver) = bounded(1);
         self.commands.send(RecorderCommand::SetCaptureSettings(
-            width, height, fps, sender,
+            width, height, fps, bitrate, sender,
         ))?;
         receiver
             .recv_timeout(Duration::from_secs(5))
@@ -215,6 +227,11 @@ impl MediaService {
         Ok(())
     }
 
+    pub fn set_schedule(&self, schedule: RecordingSchedule) -> Result<()> {
+        self.commands.send(RecorderCommand::SetSchedule(schedule))?;
+        Ok(())
+    }
+
     pub fn shutdown(&mut self) {
         self.audio_shutdown.store(true, Ordering::Release);
         let _ = self.commands.send(RecorderCommand::Shutdown);
@@ -255,11 +272,21 @@ fn recorder_thread(
         (!settings.camera_id.is_empty()).then(|| settings.camera_id.clone());
 
     loop {
-        match commands.recv_timeout(Duration::from_millis(15)) {
+        let command_timeout = preview_command_timeout(
+            preview.is_some()
+                && status
+                    .read()
+                    .map(|runtime| runtime.preview_clients > 0)
+                    .unwrap_or(false),
+            settings.fps,
+            last_preview.elapsed(),
+        );
+        match commands.recv_timeout(command_timeout) {
             Ok(RecorderCommand::Shutdown)
             | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
             Ok(RecorderCommand::SetMode(mode)) => settings.recording_mode = mode,
-            Ok(RecorderCommand::SetCaptureSettings(width, height, fps, response)) => {
+            Ok(RecorderCommand::SetSchedule(schedule)) => settings.recording_schedule = schedule,
+            Ok(RecorderCommand::SetCaptureSettings(width, height, fps, bitrate, response)) => {
                 finish_recording(&mut recording, &mut active_paths, &status);
                 segment_hour = None;
                 stop_preview_reader(&mut frame_reader);
@@ -267,6 +294,7 @@ fn recorder_thread(
                 settings.width = width;
                 settings.height = height;
                 settings.fps = fps;
+                settings.bitrate = bitrate;
                 retry_at = Instant::now();
                 update(&status, |s| {
                     s.width = width;
@@ -306,8 +334,17 @@ fn recorder_thread(
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
         }
 
-        let should_record = settings.recording_mode == RecordingMode::Continuous;
-        let current_hour = Local::now().hour();
+        let now = Local::now();
+        let schedule_in_window = settings.recording_schedule.contains(
+            now.weekday().number_from_monday() as u8,
+            now.hour() * 60 + now.minute(),
+        );
+        let should_record = match settings.recording_mode {
+            RecordingMode::Continuous => true,
+            RecordingMode::Schedule => schedule_in_window,
+            RecordingMode::Off => false,
+        };
+        let current_hour = now.hour();
         let rotate = segment_hour.is_some_and(|hour| hour != current_hour);
 
         if (!should_record || rotate) && recording.is_some() {
@@ -315,9 +352,13 @@ fn recorder_thread(
             segment_hour = None;
         }
         if !should_record {
+            let idle_status = match settings.recording_mode {
+                RecordingMode::Schedule => "schedule-waiting",
+                _ => "off",
+            };
             update(&status, |s| {
                 s.recording_active = false;
-                s.recording_status = "off".into();
+                s.recording_status = idle_status.into();
             });
             let live_clients = status
                 .read()
@@ -624,7 +665,7 @@ fn publish_preview_if_needed(
         update(status, |s| s.preview_status = "idle".into());
         return;
     }
-    let frame_interval = Duration::from_millis((1000 / u64::from(fps.clamp(1, 60))).max(1));
+    let frame_interval = preview_frame_interval(fps);
     if publisher.is_none() || last_preview.elapsed() < frame_interval {
         return;
     }
@@ -709,6 +750,39 @@ fn publish_preview_if_needed(
     }
 }
 
+const RECORDER_IDLE_POLL_INTERVAL: Duration = Duration::from_millis(15);
+
+fn preview_frame_interval(fps: u32) -> Duration {
+    Duration::from_secs_f64(1.0 / f64::from(fps.clamp(1, 60)))
+}
+
+fn preview_command_timeout(
+    preview_active: bool,
+    fps: u32,
+    elapsed_since_preview: Duration,
+) -> Duration {
+    if !preview_active {
+        return RECORDER_IDLE_POLL_INTERVAL;
+    }
+    preview_frame_interval(fps)
+        .saturating_sub(elapsed_since_preview)
+        .min(RECORDER_IDLE_POLL_INTERVAL)
+}
+
+const PREVIEW_MAX_EDGE: u32 = 1280;
+
+fn preview_dimensions(width: u32, height: u32) -> (u32, u32) {
+    let longest_edge = width.max(height);
+    if longest_edge <= PREVIEW_MAX_EDGE || longest_edge == 0 {
+        return (width, height);
+    }
+    let scaled_width =
+        (u64::from(width) * u64::from(PREVIEW_MAX_EDGE) / u64::from(longest_edge)) as u32;
+    let scaled_height =
+        (u64::from(height) * u64::from(PREVIEW_MAX_EDGE) / u64::from(longest_edge)) as u32;
+    (scaled_width.max(2) & !1, scaled_height.max(2) & !1)
+}
+
 fn create_shared_preview_reader(
     camera_id: Option<&str>,
     width: u32,
@@ -735,13 +809,14 @@ fn create_shared_preview_reader(
         }
     }
     let source = selected.context("no color frame source is available")?;
+    let (preview_width, preview_height) = preview_dimensions(width, height);
     let reader = capture
         .CreateFrameReaderWithSubtypeAndSizeAsync(
             &source,
             &HSTRING::from("BGRA8"),
             BitmapSize {
-                Width: width,
-                Height: height,
+                Width: preview_width,
+                Height: preview_height,
             },
         )?
         .join()?;
@@ -798,11 +873,8 @@ fn start_recording(
     status: &Arc<RwLock<RuntimeStatus>>,
 ) -> Result<StartedRecording> {
     fs::create_dir_all(&settings.recording_root)?;
-    let free = available_space(&settings.recording_root)?;
-    if free < 10 * 1024 * 1024 * 1024 {
-        anyhow::bail!("recording disk has less than 10 GB available");
-    }
     prune_expired_recordings(&settings.recording_root, settings.retention_days)?;
+    reclaim_recording_space(&settings.recording_root, 10 * 1024 * 1024 * 1024)?;
 
     ensure_capture(capture, camera_id, status)?;
 
@@ -1011,6 +1083,49 @@ fn prune_expired_recordings(root: &Path, retention_days: u32) -> Result<()> {
     Ok(())
 }
 
+fn reclaim_recording_space(root: &Path, target_free: u64) -> Result<()> {
+    loop {
+        if available_space(root)? >= target_free {
+            return Ok(());
+        }
+        let Some(oldest) = oldest_recording_file(root)? else {
+            anyhow::bail!(
+                "recording disk has less than 10 GB available and no recordings left to overwrite"
+            );
+        };
+        tracing::info!(path = %oldest.display(), "loop recording: overwriting oldest recording to free space");
+        fs::remove_file(&oldest)?;
+        if let Some(day) = oldest.parent() {
+            if fs::read_dir(day)?.next().is_none() {
+                let _ = fs::remove_dir(day);
+            }
+        }
+    }
+}
+
+fn oldest_recording_file(root: &Path) -> Result<Option<PathBuf>> {
+    if !root.exists() {
+        return Ok(None);
+    }
+    let mut oldest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for day in fs::read_dir(root)? {
+        let day = day?.path();
+        if !day.is_dir() || day.file_name().and_then(|v| v.to_str()) == Some("recovery") {
+            continue;
+        }
+        for item in fs::read_dir(&day)? {
+            let path = item?.path();
+            if path.extension().and_then(|v| v.to_str()) == Some("mp4") {
+                let modified = path.metadata()?.modified()?;
+                if oldest.as_ref().map_or(true, |(time, _)| modified < *time) {
+                    oldest = Some((modified, path));
+                }
+            }
+        }
+    }
+    Ok(oldest.map(|(_, path)| path))
+}
+
 fn finish_recording(
     recording: &mut Option<windows::Media::Capture::LowLagMediaRecording>,
     paths: &mut Option<(PathBuf, PathBuf)>,
@@ -1126,6 +1241,34 @@ mod tests {
         assert_eq!(status.inference_fps, 0.0);
         assert_eq!(status.tracked_targets, 0);
         assert_eq!(status.capture_backend, "Media Foundation");
+    }
+
+    #[test]
+    fn preview_wait_tracks_the_next_frame_deadline() {
+        assert_eq!(
+            preview_command_timeout(false, 30, Duration::ZERO),
+            RECORDER_IDLE_POLL_INTERVAL
+        );
+        assert_eq!(
+            preview_command_timeout(true, 30, Duration::from_millis(10)),
+            RECORDER_IDLE_POLL_INTERVAL
+        );
+
+        let nearly_due = preview_command_timeout(true, 30, Duration::from_millis(30));
+        assert!(nearly_due > Duration::ZERO);
+        assert!(nearly_due < Duration::from_millis(4));
+        assert_eq!(
+            preview_command_timeout(true, 30, Duration::from_millis(34)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn preview_dimensions_cap_only_the_preview_stream() {
+        assert_eq!(preview_dimensions(1920, 1080), (1280, 720));
+        assert_eq!(preview_dimensions(3840, 2160), (1280, 720));
+        assert_eq!(preview_dimensions(1280, 720), (1280, 720));
+        assert_eq!(preview_dimensions(640, 480), (640, 480));
     }
 
     #[test]

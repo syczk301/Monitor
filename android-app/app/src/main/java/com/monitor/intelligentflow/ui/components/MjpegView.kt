@@ -93,6 +93,15 @@ fun MjpegView(
     var containerH by remember { mutableIntStateOf(0) }
     var gestureVersion by remember { mutableIntStateOf(0) }
 
+    LaunchedEffect(streamUrl) {
+        currentFrame = null
+        enhancedFrame = null
+        error = null
+        scale = 1f
+        offset = Offset.Zero
+        aiActive = false
+    }
+
     DisposableEffect(Unit) {
         onDispose { superRes.release() }
     }
@@ -133,13 +142,17 @@ fun MjpegView(
                     val response = call.execute()
 
                     if (!response.isSuccessful) {
-                        error = "HTTP ${response.code}"
+                        mainHandler.post {
+                            if (running.get()) error = "HTTP ${response.code}"
+                        }
                         response.close()
                         Thread.sleep(2000)
                         continue
                     }
 
-                    error = null
+                    mainHandler.post {
+                        if (running.get()) error = null
+                    }
                     val body = response.body ?: continue
                     val input = BufferedInputStream(body.byteStream(), 64 * 1024)
                     while (running.get()) {
@@ -149,7 +162,9 @@ fun MjpegView(
                     response.close()
                 } catch (e: Exception) {
                     if (running.get()) {
-                        error = e.message
+                        mainHandler.post {
+                            if (running.get()) error = e.message
+                        }
                         try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
                     }
                 } finally {

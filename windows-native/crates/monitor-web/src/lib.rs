@@ -12,7 +12,7 @@ use axum::{
 };
 use monitor_media::{MediaController, RuntimeStatus};
 use monitor_storage::{
-    AppPaths, RecordingMode, RemoteNode, Repository, Settings, list_recordings,
+    AppPaths, RecordingMode, RecordingSchedule, RemoteNode, Repository, Settings, list_recordings,
     load_or_create_settings, resolve_recording, save_settings_atomic,
 };
 use serde::{Deserialize, Serialize};
@@ -141,6 +141,10 @@ pub fn router(state: WebState) -> Router {
         .route("/api/remote_audio/{node}", get(remote_audio))
         .route("/api/camera_settings", post(camera_settings))
         .route("/api/recording_mode", post(recording_mode))
+        .route(
+            "/api/recording_schedule",
+            get(recording_schedule).post(set_recording_schedule),
+        )
         .route("/api/local_recording", post(local_recording))
         .route("/api/recordings", get(recordings))
         .route("/api/recordings/file", get(recording_file))
@@ -696,12 +700,31 @@ async fn stats(State(state): State<WebState>) -> Json<Value> {
     }))
 }
 
+fn schedule_in_window(schedule: &RecordingSchedule) -> bool {
+    use chrono::{Datelike, Local, Timelike};
+    let now = Local::now();
+    schedule.contains(
+        now.weekday().number_from_monday() as u8,
+        now.hour() * 60 + now.minute(),
+    )
+}
+
+fn recording_mode_label(mode: &RecordingMode) -> &'static str {
+    match mode {
+        RecordingMode::Off => "off",
+        RecordingMode::Continuous => "continuous",
+        RecordingMode::Schedule => "schedule",
+    }
+}
+
 async fn capture_info(State(state): State<WebState>) -> Json<Value> {
     let runtime = state.runtime.read().expect("runtime poisoned").clone();
     let settings = state.settings.read().expect("settings poisoned").clone();
+    let in_window = schedule_in_window(&settings.recording_schedule);
     Json(json!({
         "requested_width": settings.width,
         "requested_height": settings.height,
+        "requested_bitrate": settings.bitrate,
         "actual_width": runtime.width,
         "actual_height": runtime.height,
         "mjpeg_quality": 75,
@@ -712,9 +735,15 @@ async fn capture_info(State(state): State<WebState>) -> Json<Value> {
         "preview_status": runtime.preview_status,
         "preview_error": runtime.preview_error,
         "local_recording_enabled": runtime.recording_active,
-        "recording_mode": match settings.recording_mode { RecordingMode::Off => "off", RecordingMode::Continuous => "continuous" },
+        "recording_mode": recording_mode_label(&settings.recording_mode),
         "recording_active": runtime.recording_active,
-        "recording_triggered_by": if runtime.recording_active { "continuous" } else { "none" },
+        "recording_triggered_by": if runtime.recording_active {
+            recording_mode_label(&settings.recording_mode)
+        } else {
+            "none"
+        },
+        "recording_schedule": settings.recording_schedule,
+        "schedule_in_window": in_window,
         "auto_stop_remaining_ms": 0,
         "local_recording_status": runtime.recording_status,
         "local_recording_output_dir": settings.recording_root,
@@ -766,6 +795,8 @@ struct CameraSettings {
     width: u32,
     height: u32,
     fps: u32,
+    #[serde(default)]
+    bitrate: Option<u32>,
 }
 
 async fn camera_settings(
@@ -775,6 +806,9 @@ async fn camera_settings(
     if !(640..=3840).contains(&payload.width)
         || !(480..=2160).contains(&payload.height)
         || !(5..=60).contains(&payload.fps)
+        || payload
+            .bitrate
+            .map_or(false, |bitrate| !(256_000..=16_000_000).contains(&bitrate))
     {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -830,8 +864,15 @@ async fn camera_settings(
     let width = payload.width;
     let height = payload.height;
     let fps = payload.fps;
+    let bitrate = payload.bitrate.unwrap_or_else(|| {
+        state
+            .settings
+            .read()
+            .expect("settings poisoned")
+            .bitrate
+    });
     if let Err(error) =
-        tokio::task::spawn_blocking(move || controller.set_capture_settings(width, height, fps))
+        tokio::task::spawn_blocking(move || controller.set_capture_settings(width, height, fps, bitrate))
             .await
             .unwrap_or_else(|error| Err(error.into()))
     {
@@ -842,6 +883,7 @@ async fn camera_settings(
         settings.width = payload.width;
         settings.height = payload.height;
         settings.fps = payload.fps;
+        settings.bitrate = bitrate;
     }
     let mut persisted = match load_or_create_settings(&state.paths) {
         Ok(settings) => settings,
@@ -850,6 +892,7 @@ async fn camera_settings(
     persisted.width = payload.width;
     persisted.height = payload.height;
     persisted.fps = payload.fps;
+    persisted.bitrate = bitrate;
     if let Err(error) = save_settings_atomic(&state.paths, &persisted) {
         return internal_error(error);
     }
@@ -868,6 +911,7 @@ async fn recording_mode(
     let mode = match payload.mode.as_str() {
         "off" => RecordingMode::Off,
         "continuous" => RecordingMode::Continuous,
+        "schedule" => RecordingMode::Schedule,
         "auto" => {
             return (
                 StatusCode::CONFLICT,
@@ -899,6 +943,69 @@ async fn recording_mode(
         return internal_error(error);
     }
     capture_info(State(state)).await.into_response()
+}
+
+#[derive(Deserialize)]
+struct RecordingSchedulePayload {
+    start: String,
+    end: String,
+    #[serde(default)]
+    days: Vec<u8>,
+}
+
+async fn recording_schedule(State(state): State<WebState>) -> Json<Value> {
+    let (mode, schedule) = {
+        let settings = state.settings.read().expect("settings poisoned");
+        (
+            settings.recording_mode.clone(),
+            settings.recording_schedule.clone(),
+        )
+    };
+    let runtime = state.runtime.read().expect("runtime poisoned").clone();
+    Json(json!({
+        "mode": recording_mode_label(&mode),
+        "schedule": schedule,
+        "schedule_in_window": schedule_in_window(&schedule),
+        "recording_active": runtime.recording_active,
+        "recording_status": runtime.recording_status,
+    }))
+}
+
+async fn set_recording_schedule(
+    State(state): State<WebState>,
+    Json(payload): Json<RecordingSchedulePayload>,
+) -> Response {
+    let mut days = payload.days;
+    days.sort_unstable();
+    days.dedup();
+    let schedule = RecordingSchedule {
+        start: payload.start.trim().to_owned(),
+        end: payload.end.trim().to_owned(),
+        days,
+    };
+    if !schedule.is_valid() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"detail":"invalid recording schedule (expect HH:MM, days 1-7)"})),
+        )
+            .into_response();
+    }
+    if let Err(error) = state.media.set_schedule(schedule.clone()) {
+        return internal_error(error);
+    }
+    {
+        let mut settings = state.settings.write().expect("settings poisoned");
+        settings.recording_schedule = schedule.clone();
+    }
+    let mut persisted = match load_or_create_settings(&state.paths) {
+        Ok(settings) => settings,
+        Err(error) => return internal_error(error),
+    };
+    persisted.recording_schedule = schedule;
+    if let Err(error) = save_settings_atomic(&state.paths, &persisted) {
+        return internal_error(error);
+    }
+    recording_schedule(State(state)).await.into_response()
 }
 
 #[derive(Deserialize)]

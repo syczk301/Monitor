@@ -213,6 +213,34 @@
       background: rgba(15, 23, 42, 0.42);
     }
 
+    .schedule-banner {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      border: 1px solid #d8dbe2;
+      background: #fafbfc;
+      color: #4b5563;
+    }
+
+    .schedule-banner.visible { display: flex; }
+
+    .schedule-banner .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #9ca3af;
+      flex: none;
+    }
+
+    .schedule-banner.in-window { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
+    .schedule-banner.in-window .dot { background: #22c55e; }
+    .schedule-banner.out-window { border-color: #fde68a; background: #fffbeb; color: #b45309; }
+    .schedule-banner.out-window .dot { background: #f59e0b; }
+
     @media (max-width: 980px) {
       .wrap {
         grid-template-columns: 1fr;
@@ -285,6 +313,10 @@
       <div class="toolbar">
         <h2>录像列表</h2>
         <button class="primary" type="button" onclick="loadRecordings()">刷新</button>
+      </div>
+      <div id="schedule-banner" class="schedule-banner">
+        <span class="dot"></span>
+        <span id="schedule-banner-text"></span>
       </div>
       <div id="recordings-view" class="empty">正在加载录像列表...</div>
     </div>
@@ -429,6 +461,38 @@
       if (first) renderSelection(first);
     }
 
+    const DAY_NAMES = { 1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日" };
+
+    function scheduleDaysText(days) {
+      if (!Array.isArray(days) || days.length === 0) return "每天";
+      return days.map((d) => DAY_NAMES[d] || d).join("、");
+    }
+
+    async function loadScheduleBanner() {
+      const banner = document.getElementById("schedule-banner");
+      const text = document.getElementById("schedule-banner-text");
+      try {
+        const res = await fetch("/api/recording_schedule");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.mode !== "schedule") {
+          banner.className = "schedule-banner";
+          return;
+        }
+        const sched = data.schedule || {};
+        const range = `${scheduleDaysText(sched.days)} ${sched.start || "--"}–${sched.end || "--"}`;
+        if (data.schedule_in_window) {
+          banner.className = "schedule-banner visible in-window";
+          text.textContent = `定时录制中 · ${range}${data.recording_active ? " · 正在录像" : ""}`;
+        } else {
+          banner.className = "schedule-banner visible out-window";
+          text.textContent = `定时录制已启用 · ${range} · 当前在时段外`;
+        }
+      } catch (err) {
+        banner.className = "schedule-banner";
+      }
+    }
+
     async function loadRecordings() {
       const root = document.getElementById("recordings-view");
       root.className = "empty";
@@ -445,6 +509,8 @@
     }
 
     loadRecordings();
+    loadScheduleBanner();
+    setInterval(loadScheduleBanner, 30000);
   </script>
 </body>
 

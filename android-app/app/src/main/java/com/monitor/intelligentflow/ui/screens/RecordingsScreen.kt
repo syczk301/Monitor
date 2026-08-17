@@ -4,6 +4,7 @@ import android.net.Uri
 import android.widget.MediaController
 import android.widget.VideoView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,16 +18,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,6 +49,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.monitor.intelligentflow.data.MonitorApiService
 import com.monitor.intelligentflow.data.RecordingFile
 import com.monitor.intelligentflow.data.RecordingGroup
+import com.monitor.intelligentflow.data.RecordingSchedule
+import com.monitor.intelligentflow.data.RecordingStatus
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.LocalDateTime
@@ -59,6 +66,43 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
     var downloadingPath by remember { mutableStateOf<String?>(null) }
     var selectedRecording by remember { mutableStateOf<RecordingFile?>(null) }
     var localVideoFile by remember { mutableStateOf<File?>(null) }
+    var recStatus by remember { mutableStateOf<RecordingStatus?>(null) }
+    var savingSchedule by remember { mutableStateOf(false) }
+    var scheduleMsg by remember { mutableStateOf<String?>(null) }
+
+    fun loadRecordingStatus() {
+        scope.launch {
+            recStatus = runCatching { api.getRecordingStatus() }.getOrNull() ?: recStatus
+        }
+    }
+
+    fun changeMode(mode: String) {
+        scope.launch {
+            savingSchedule = true
+            scheduleMsg = null
+            try {
+                api.setRecordingMode(mode)
+                recStatus = api.getRecordingStatus()
+            } catch (e: Exception) {
+                scheduleMsg = e.message ?: "设置录制模式失败"
+            }
+            savingSchedule = false
+        }
+    }
+
+    fun saveSchedule(start: String, end: String, days: List<Int>) {
+        scope.launch {
+            savingSchedule = true
+            scheduleMsg = null
+            try {
+                recStatus = api.setRecordingSchedule(RecordingSchedule(start, end, days))
+                scheduleMsg = "定时时段已保存"
+            } catch (e: Exception) {
+                scheduleMsg = e.message ?: "保存定时时段失败"
+            }
+            savingSchedule = false
+        }
+    }
 
     fun refresh() {
         scope.launch {
@@ -87,7 +131,10 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
         }
     }
 
-    LaunchedEffect(Unit) { refresh() }
+    LaunchedEffect(Unit) {
+        refresh()
+        loadRecordingStatus()
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         Row(
@@ -106,6 +153,16 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
                 Text("刷新", fontWeight = FontWeight.Bold)
             }
         }
+
+        RecordingSettingsCard(
+            status = recStatus,
+            saving = savingSchedule,
+            message = scheduleMsg,
+            onModeChange = { changeMode(it) },
+            onSaveSchedule = { start, end, days -> saveSchedule(start, end, days) },
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Spacer(Modifier.height(12.dp))
 
         if (selectedRecording != null && localVideoFile != null) {
             RecordingPlayerCard(
@@ -158,6 +215,165 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RecordingSettingsCard(
+    status: RecordingStatus?,
+    saving: Boolean,
+    message: String?,
+    onModeChange: (String) -> Unit,
+    onSaveSchedule: (String, String, List<Int>) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val schedule = status?.schedule ?: RecordingSchedule()
+    var startText by remember(schedule.start) { mutableStateOf(schedule.start) }
+    var endText by remember(schedule.end) { mutableStateOf(schedule.end) }
+    var selectedDays by remember(schedule.days) { mutableStateOf(schedule.days.toSet()) }
+    val mode = status?.mode ?: "off"
+
+    val summary = when (mode) {
+        "continuous" -> "持续录制中"
+        "schedule" -> if (status?.scheduleInWindow == true) {
+            "定时录制 · 时段内"
+        } else {
+            "定时录制 · 时段外"
+        }
+        else -> "录制已关闭"
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+        )
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("录制设置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (mode == "schedule" && status?.scheduleInWindow == true) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            if (mode == "schedule" && !expanded) {
+                Text(
+                    text = "${schedule.daysText()} ${schedule.start}–${schedule.end}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (expanded) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ModeChip("关闭", mode == "off", !saving) { onModeChange("off") }
+                    ModeChip("持续录制", mode == "continuous", !saving) { onModeChange("continuous") }
+                    ModeChip("定时录制", mode == "schedule", !saving) { onModeChange("schedule") }
+                }
+
+                if (mode == "schedule") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = startText,
+                            onValueChange = { startText = it },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("开始 HH:MM") },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = endText,
+                            onValueChange = { endText = it },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("结束 HH:MM") },
+                            singleLine = true
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val dayNames = listOf(1 to "一", 2 to "二", 3 to "三", 4 to "四", 5 to "五", 6 to "六", 7 to "日")
+                        dayNames.forEach { (day, label) ->
+                            DayChip(label, selectedDays.contains(day)) {
+                                selectedDays = if (selectedDays.contains(day)) {
+                                    selectedDays - day
+                                } else {
+                                    selectedDays + day
+                                }
+                            }
+                        }
+                    }
+                    Text(
+                        text = "不选星期表示每天生效；结束时间早于开始时间表示跨午夜录制",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = { onSaveSchedule(startText.trim(), endText.trim(), selectedDays.sorted()) },
+                        enabled = !saving,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (saving) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.size(6.dp))
+                        }
+                        Text("保存时段", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                message?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (it.contains("失败")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModeChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+    val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun DayChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+    val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(bg)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = fg, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
     }
 }
 
