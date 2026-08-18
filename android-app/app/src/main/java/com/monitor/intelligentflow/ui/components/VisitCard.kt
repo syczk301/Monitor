@@ -36,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -73,12 +72,11 @@ fun VisitCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .shadow(elevation = if (selected) 6.dp else 2.dp, shape = RoundedCornerShape(20.dp), spotColor = Color(0x1A000000))
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(bgColor)
-            .border(if (selected) 2.dp else 1.dp, if (selected) borderColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+            .border(if (selected) 2.dp else 1.dp, if (selected) borderColor else MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
             .clickable { onSelectChange(!selected) }
-            .padding(16.dp)
+            .padding(15.dp)
     ) {
         Column {
             Row(
@@ -86,16 +84,18 @@ fun VisitCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(Modifier.weight(1f)) {
                     Text(
                         text = group.personId,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "识别到 ${group.visits.size} 次行为",
+                        text = "${group.visits.size} 次识别 · 总停留 ${formatDuration(group.totalStay)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -103,18 +103,17 @@ fun VisitCard(
                 StatusBadge(active = group.hasActive)
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                MetricPill("总停留", formatDuration(group.totalStay), Modifier.weight(1f))
                 MetricPill("首次出现", formatShort(group.firstSeen), Modifier.weight(1f))
-                MetricPill("最后活动", formatShort(group.lastSeen), Modifier.weight(1f))
+                MetricPill("最近活动", formatShort(group.lastSeen), Modifier.weight(1f))
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -124,7 +123,7 @@ fun VisitCard(
                 TextField(
                     value = noteText,
                     onValueChange = { noteText = it },
-                    modifier = Modifier.weight(1f).height(46.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
                     placeholder = {
                         Text("添加备注信息...",
                             style = MaterialTheme.typography.bodySmall,
@@ -151,7 +150,7 @@ fun VisitCard(
                         focusManager.clearFocus()
                         onSaveNote(noteText)
                     },
-                    modifier = Modifier.size(46.dp),
+                    modifier = Modifier.size(44.dp),
                     colors = IconButtonDefaults.iconButtonColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.primary
@@ -165,7 +164,7 @@ fun VisitCard(
                 }
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.size(46.dp),
+                    modifier = Modifier.size(44.dp),
                     colors = IconButtonDefaults.iconButtonColors(
                         containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
                         contentColor = MaterialTheme.colorScheme.error
@@ -218,7 +217,7 @@ private fun MetricPill(label: String, value: String, modifier: Modifier = Modifi
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-            .padding(vertical = 10.dp, horizontal = 8.dp)
+            .padding(vertical = 8.dp, horizontal = 8.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -230,7 +229,7 @@ private fun MetricPill(label: String, value: String, modifier: Modifier = Modifi
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 10.sp
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 value,
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
@@ -245,9 +244,9 @@ private fun MetricPill(label: String, value: String, modifier: Modifier = Modifi
 
 private fun formatDuration(seconds: Double): String {
     return when {
-        seconds >= 3600 -> "%.1fh".format(seconds / 3600.0)
-        seconds >= 60 -> "%.1fm".format(seconds / 60.0)
-        else -> "%.0fs".format(seconds)
+        seconds >= 3600 -> "%.1f 小时".format(seconds / 3600.0)
+        seconds >= 60 -> "%.1f 分钟".format(seconds / 60.0)
+        else -> "%.0f 秒".format(seconds)
     }
 }
 

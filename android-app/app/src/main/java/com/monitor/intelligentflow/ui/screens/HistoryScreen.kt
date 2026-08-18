@@ -1,7 +1,6 @@
 package com.monitor.intelligentflow.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +27,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -92,43 +93,64 @@ fun HistoryScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) { refresh() }
 
     Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("访客记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    if (loading) "正在同步记录…" else "${groups.size} 位访客 · ${groups.count { it.hasActive }} 人在场",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(
+                onClick = { refresh() },
+                enabled = !loading,
+                colors = IconButtonDefaults.iconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(Icons.Rounded.Refresh, contentDescription = "刷新访客记录")
+            }
+        }
+
         if (!loading && groups.isNotEmpty()) {
-            SummaryBar(
-                personCount = groups.size,
-                activeCount = groups.count { it.hasActive },
-                selectedCount = selectedIds.size
-            )
+            SummaryBar(groups.size, groups.count { it.hasActive }, selectedIds.size)
         }
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+                .padding(horizontal = 18.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            ActionChip(icon = Icons.Rounded.Refresh, label = "刷新", onClick = { refresh() })
-            ActionChip(
-                icon = Icons.Rounded.DeleteSweep,
-                label = "删除 (${selectedIds.size})",
-                enabled = selectedIds.isNotEmpty(),
-                color = MaterialTheme.colorScheme.error,
-                onClick = {
-                    scope.launch {
-                        if (selectedIds.isEmpty()) return@launch
-                        try {
-                            api.bulkDeleteVisits(selectedIds.toList())
-                            selectedIds.clear()
-                            refresh()
-                        } catch (_: Exception) {}
-                    }
-                }
-            )
             ActionChip(icon = Icons.Rounded.Assessment, label = "日报", onClick = {
                 scope.launch {
                     try { report = api.getReport("daily"); showReport = true } catch (_: Exception) {}
                 }
             })
+            if (selectedIds.isNotEmpty()) {
+                ActionChip(
+                    icon = Icons.Rounded.DeleteSweep,
+                    label = "删除 ${selectedIds.size} 项",
+                    color = MaterialTheme.colorScheme.error,
+                    onClick = {
+                        scope.launch {
+                            try {
+                                api.bulkDeleteVisits(selectedIds.toList())
+                                selectedIds.clear()
+                                refresh()
+                            } catch (_: Exception) {}
+                        }
+                    }
+                )
+            }
             ActionChip(icon = Icons.Rounded.CalendarMonth, label = "周报", onClick = {
                 scope.launch {
                     try { report = api.getReport("weekly"); showReport = true } catch (_: Exception) {}
@@ -171,8 +193,8 @@ fun HistoryScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
             }
             else -> {
                 LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(groups, key = { it.personId }) { group ->
                         val firstId = group.visits.firstOrNull()?.id ?: 0
@@ -238,26 +260,27 @@ private fun SummaryBar(personCount: Int, activeCount: Int, selectedCount: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 18.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        SummaryChip("总计: $personCount", MaterialTheme.colorScheme.primary)
-        SummaryChip("在场: $activeCount", MaterialTheme.colorScheme.tertiary)
-        if (selectedCount > 0)
-            SummaryChip("选中: $selectedCount", MaterialTheme.colorScheme.secondary)
+        SummaryChip("访客", personCount.toString(), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+        SummaryChip("在场", activeCount.toString(), MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
+        SummaryChip("已选", selectedCount.toString(), MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun SummaryChip(text: String, color: Color) {
-    Box(
-        modifier = Modifier
+private fun SummaryChip(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(color.copy(alpha = 0.1f))
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text, color = color, style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+        Text(value, color = color, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
     }
 }
 
@@ -272,8 +295,8 @@ private fun ActionChip(
     FilledTonalButton(
         onClick = onClick,
         enabled = enabled,
-        shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(10.dp),
+        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 8.dp),
         colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
             containerColor = color.copy(alpha = 0.1f),
             contentColor = color

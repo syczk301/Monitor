@@ -4,9 +4,8 @@ import android.net.Uri
 import android.widget.MediaController
 import android.widget.VideoView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,13 +24,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -47,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.monitor.intelligentflow.data.MonitorApiService
@@ -167,21 +170,34 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
         }
     }
 
+    val visibleFileCount = visibleGroups.sumOf { it.items.size }
+
     Column(modifier = modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 18.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            FilledTonalButton(
+            Column {
+                Text("录像资料", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    if (loading) "正在同步录像…" else "$visibleFileCount 个文件 · ${devices.size} 台设备",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(
                 onClick = { refresh() },
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                enabled = !loading,
+                colors = IconButtonDefaults.iconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
             ) {
-                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.size(6.dp))
-                Text("刷新", fontWeight = FontWeight.Bold)
+                Icon(Icons.Rounded.Refresh, contentDescription = "刷新录像列表")
             }
         }
 
@@ -191,7 +207,7 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
             message = scheduleMsg,
             onModeChange = { changeMode(it) },
             onSaveSchedule = { start, end, days -> saveSchedule(start, end, days) },
-            modifier = Modifier.padding(horizontal = 16.dp)
+            modifier = Modifier.padding(horizontal = 18.dp)
         )
         Spacer(Modifier.height(12.dp))
 
@@ -200,7 +216,7 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
                 devices = devices,
                 selectedId = selectedDeviceId,
                 onSelect = { selectedDeviceId = it },
-                modifier = Modifier.padding(horizontal = 16.dp)
+                modifier = Modifier.padding(horizontal = 18.dp)
             )
             Spacer(Modifier.height(8.dp))
         }
@@ -209,7 +225,7 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
             RecordingPlayerCard(
                 file = localVideoFile!!,
                 recording = selectedRecording!!,
-                modifier = Modifier.padding(horizontal = 16.dp)
+                modifier = Modifier.padding(horizontal = 18.dp)
             )
             Spacer(Modifier.height(12.dp))
         }
@@ -232,17 +248,15 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
             }
             else -> {
                 LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     items(visibleGroups, key = { it.day }) { group ->
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                text = group.day,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(group.day, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+                                Text("${group.items.size} 段", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             group.items.forEach { item ->
                                 RecordingItemCard(
                                     item = item,
@@ -266,15 +280,18 @@ private fun DeviceFilter(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        DeviceChip("all", "全部设备", selectedId == "all", onSelect)
-        devices.forEach { (id, name) ->
-            DeviceChip(id, name, selectedId == id, onSelect)
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text("选择设备", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(7.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            DeviceChip("all", "全部", "所有录像", selectedId == "all", onSelect, Modifier.weight(1f))
+            devices.forEach { (id, name) ->
+                val (title, subtitle) = deviceChipText(name)
+                DeviceChip(id, title, subtitle, selectedId == id, onSelect, Modifier.weight(1f))
+            }
         }
     }
 }
@@ -282,38 +299,46 @@ private fun DeviceFilter(
 @Composable
 private fun DeviceChip(
     id: String,
-    label: String,
+    title: String,
+    subtitle: String,
     selected: Boolean,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(11.dp))
+    Column(
+        modifier = modifier
+            .height(60.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(
-                if (selected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.surfaceVariant
+                if (selected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surface
+            )
+            .border(
+                1.dp,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                RoundedCornerShape(12.dp)
             )
             .clickable { onSelect(id) }
-            .padding(horizontal = 13.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.Center
     ) {
-        Box(
-            Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(
-                    if (selected) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.tertiary
-                )
-        )
-        Spacer(Modifier.size(7.dp))
-        Text(
-            label,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(7.dp).clip(CircleShape).background(if (id == "all") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary))
+            Spacer(Modifier.size(6.dp))
+            Text(title, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private fun deviceChipText(name: String): Pair<String, String> {
+    return if (name.startsWith("远程电脑 ")) {
+        "远程电脑" to name.removePrefix("远程电脑 ")
+    } else {
+        name to "本机"
     }
 }
 
@@ -334,11 +359,13 @@ private fun RecordingSettingsCard(
     val mode = status?.mode ?: "off"
 
     val summary = when (mode) {
-        "continuous" -> "持续录制中"
-        "schedule" -> if (status?.scheduleInWindow == true) {
-            "定时录制 · 时段内"
+        "continuous" -> if (status?.recordingActive == true) "正在持续录像" else "持续模式 · 等待录像"
+        "schedule" -> if (status?.recordingActive == true) {
+            "正在定时录像"
+        } else if (status?.scheduleInWindow == true) {
+            "时段内 · 等待录像"
         } else {
-            "定时录制 · 时段外"
+            "定时模式 · 时段外"
         }
         else -> "录制已关闭"
     }
@@ -348,7 +375,8 @@ private fun RecordingSettingsCard(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-        )
+        ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
@@ -358,17 +386,20 @@ private fun RecordingSettingsCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("录制设置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Text(
-                    text = summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (mode == "schedule" && status?.scheduleInWindow == true) {
-                        MaterialTheme.colorScheme.tertiary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    }
+                    Spacer(Modifier.size(10.dp))
+                    Column {
+                        Text("录像设置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+                        Text(summary, style = MaterialTheme.typography.bodySmall,
+                            color = if (status?.recordingActive == true) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Icon(if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起录像设置" else "展开录像设置",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             if (mode == "schedule" && !expanded) {
@@ -544,6 +575,7 @@ private fun RecordingItemCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
@@ -560,13 +592,13 @@ private fun RecordingItemCard(
                 Text(
                     item.deviceName,
                     color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     "${formatRecordingClock(item.startedAt)} 录像",
                     fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.titleSmall
                 )
                 Text(
                     "${formatRecordingTime(item.startedAt)}  ·  ${formatRecordingSize(item.sizeBytes)}",
