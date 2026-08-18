@@ -1,6 +1,7 @@
 package com.monitor.intelligentflow.ui.theme
 
 import android.app.Activity
+import android.os.Build
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -52,6 +53,11 @@ fun IntelligentFlowMonitorTheme(
             val window = (view.context as Activity).window
             window.statusBarColor = android.graphics.Color.TRANSPARENT
             window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+                window.isStatusBarContrastEnforced = false
+            }
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = true
                 isAppearanceLightNavigationBars = true

@@ -1,4 +1,4 @@
-# Product Design QA — Android V4.6.0
+# Product Design QA — Android V4.6.1
 
 Final result: passed
 
@@ -9,6 +9,7 @@ Final result: passed
 - Implementations: `.test-runs/v46-build/01-record.png`, `.test-runs/v46-build/02-recordings.png`, `.test-runs/v46-build/03-settings.png`
 - Combined comparison input: `.test-runs/v46-build/07-reference-vs-implementation.png`
 - Additional states: `.test-runs/v46-build/04-recordings-remote-filter.png`, `.test-runs/v46-build/05-recording-settings-expanded.png`, `.test-runs/v46-build/08-recordings-font120.png`
+- Immersive gesture-area verification: `.test-runs/v461-immersive/01-settings-bottom-immersive.png`
 - Viewport: Android emulator, 1080 x 2400 pixels, portrait, light theme.
 - Density normalization: all source and implementation screenshots were captured from the same emulator and have identical 1080 x 2400 pixel dimensions; no scaling was used for the individual comparisons.
 - State: configured service, two online cameras, populated visitor and local-recording data, remote-recording empty state.
@@ -29,6 +30,7 @@ The reference is the accepted monitor-screen design language rather than a pixel
 - Recording controls: the two computer names and the all-devices state fit in one segmented row. The expanded schedule panel preserves all mode, time, weekday, and save controls without clipping.
 - Settings form: current connection state precedes editable credentials, password visibility has an explicit accessible label, and save feedback remains in the original success/error regions.
 - Text scaling: the recordings screen was rechecked at Android font scale 1.20. Dynamic local-device text ellipsizes intentionally; headings, filters, cards, playback actions, and bottom navigation remain usable.
+- System navigation immersion: the bottom navigation background now continues through the Android gesture inset without a separate white strip. Pixel samples at y=2330, 2360, and 2390 are the same `#ECF2FE`, and the gesture handle remains legible.
 
 ## Interaction checks
 
@@ -38,6 +40,7 @@ The reference is the accepted monitor-screen design language rather than a pixel
 - Recording-settings expand/collapse and all mode/time/day/save controls visible.
 - Recording playback buttons remain enabled for available local files.
 - Settings address, username, password, password visibility, and save controls remain interactive.
+- Android gesture navigation remains available while its safe-area background is visually merged with the app navigation bar.
 
 ## Comparison history
 

@@ -40,6 +40,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -329,44 +330,51 @@ private fun MonitorApp(vm: MainViewModel) {
             }
 
             if (!isFullscreen) {
-                NavigationBar(
+                val immersedNavigationColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
+                        .background(immersedNavigationColor)
                         .windowInsetsPadding(WindowInsets.navigationBars),
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    tonalElevation = 3.dp
                 ) {
-                    AppTab.entries.forEach { tab ->
-                        val selected = selectedTab == tab
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = { selectedTab = tab },
-                            icon = {
-                                Icon(
-                                    if (selected) tab.selectedIcon else tab.icon,
-                                    contentDescription = tab.title,
-                                    modifier = Modifier.size(22.dp)
+                    NavigationBar(
+                        modifier = Modifier.fillMaxWidth(),
+                        containerColor = immersedNavigationColor,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tonalElevation = 0.dp,
+                        windowInsets = WindowInsets(0, 0, 0, 0)
+                    ) {
+                        AppTab.entries.forEach { tab ->
+                            val selected = selectedTab == tab
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = { selectedTab = tab },
+                                icon = {
+                                    Icon(
+                                        if (selected) tab.selectedIcon else tab.icon,
+                                        contentDescription = tab.title,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        tab.title,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 10.sp
+                                    )
+                                },
+                                alwaysShowLabel = true,
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer
                                 )
-                            },
-                            label = {
-                                Text(
-                                    tab.title,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 10.sp
-                                )
-                            },
-                            alwaysShowLabel = true,
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                indicatorColor = MaterialTheme.colorScheme.primaryContainer
                             )
-                        )
+                        }
                     }
                 }
             }
