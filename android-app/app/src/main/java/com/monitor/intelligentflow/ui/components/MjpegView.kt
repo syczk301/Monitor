@@ -39,6 +39,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,6 +80,8 @@ fun MjpegView(
     authHeader: String?,
     isFullscreen: Boolean = false,
     onToggleFullscreen: () -> Unit = {},
+    onStreamFps: (Double) -> Unit = {},
+    showFullscreenControl: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
@@ -92,6 +95,7 @@ fun MjpegView(
     var containerW by remember { mutableIntStateOf(0) }
     var containerH by remember { mutableIntStateOf(0) }
     var gestureVersion by remember { mutableIntStateOf(0) }
+    val streamFpsCallback = rememberUpdatedState(onStreamFps)
 
     LaunchedEffect(streamUrl) {
         currentFrame = null
@@ -100,6 +104,7 @@ fun MjpegView(
         scale = 1f
         offset = Offset.Zero
         aiActive = false
+        onStreamFps(0.0)
     }
 
     DisposableEffect(Unit) {
@@ -112,6 +117,8 @@ fun MjpegView(
         val activeCall = AtomicReference<okhttp3.Call?>(null)
         val mainHandler = Handler(Looper.getMainLooper())
         val decoderThread = Thread {
+            var decodedFrames = 0
+            var sampleStartedNs = System.nanoTime()
             while (running.get()) {
                 val data = latestFrame.getAndSet(null)
                 if (data == null) {
@@ -120,6 +127,17 @@ fun MjpegView(
                 }
                 val bmp = BitmapFactory.decodeByteArray(data, 0, data.size)
                 if (bmp != null && running.get()) {
+                    decodedFrames++
+                    val nowNs = System.nanoTime()
+                    val elapsedNs = nowNs - sampleStartedNs
+                    if (elapsedNs >= 1_000_000_000L) {
+                        val measuredFps = decodedFrames * 1_000_000_000.0 / elapsedNs
+                        decodedFrames = 0
+                        sampleStartedNs = nowNs
+                        mainHandler.post {
+                            if (running.get()) streamFpsCallback.value(measuredFps)
+                        }
+                    }
                     mainHandler.post {
                         if (running.get()) currentFrame = bmp
                     }
@@ -163,7 +181,10 @@ fun MjpegView(
                 } catch (e: Exception) {
                     if (running.get()) {
                         mainHandler.post {
-                            if (running.get()) error = e.message
+                            if (running.get()) {
+                                error = e.message
+                                streamFpsCallback.value(0.0)
+                            }
                         }
                         try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
                     }
@@ -341,28 +362,30 @@ fun MjpegView(
             )
         }
 
-        IconButton(
-            onClick = {
-                scale = 1f
-                offset = Offset.Zero
-                enhancedFrame = null
-                gestureVersion++
-                onToggleFullscreen()
-            },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(8.dp)
-                .size(36.dp),
-            colors = IconButtonDefaults.iconButtonColors(
-                containerColor = Color.Black.copy(alpha = 0.5f)
-            )
-        ) {
-            Icon(
-                if (isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
-                contentDescription = "fullscreen",
-                tint = Color.White,
-                modifier = Modifier.size(20.dp)
-            )
+        if (showFullscreenControl) {
+            IconButton(
+                onClick = {
+                    scale = 1f
+                    offset = Offset.Zero
+                    enhancedFrame = null
+                    gestureVersion++
+                    onToggleFullscreen()
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .size(36.dp),
+                colors = IconButtonDefaults.iconButtonColors(
+                    containerColor = Color.Black.copy(alpha = 0.5f)
+                )
+            ) {
+                Icon(
+                    if (isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                    contentDescription = "fullscreen",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }

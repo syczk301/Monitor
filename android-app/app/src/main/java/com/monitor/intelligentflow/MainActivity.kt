@@ -5,23 +5,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Settings
@@ -31,8 +26,10 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.Sensors
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -54,10 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -253,22 +247,54 @@ private fun MonitorApp(vm: MainViewModel) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
+                                    .size(28.dp)
                                     .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary)
-                            )
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                            Spacer(Modifier.size(9.dp))
                             Text(
-                                text = " SYNC_NET",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
+                                text = "SYNC NET",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onBackground,
-                                letterSpacing = 1.sp
+                                letterSpacing = (-0.2).sp
                             )
                         }
                     },
+                    actions = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.tertiary)
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(
+                                "在线",
+                                color = MaterialTheme.colorScheme.tertiary,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            IconButton(onClick = { selectedTab = AppTab.Settings }) {
+                                Icon(
+                                    Icons.Rounded.Settings,
+                                    contentDescription = "设置",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
+                        containerColor = MaterialTheme.colorScheme.background,
                         titleContentColor = MaterialTheme.colorScheme.onBackground
                     )
                 )
@@ -302,66 +328,45 @@ private fun MonitorApp(vm: MainViewModel) {
                 )
             }
 
-            AnimatedVisibility(
-                visible = !isFullscreen,
-                enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)),
-                exit = slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300)),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(horizontal = 24.dp, vertical = 16.dp)
-            ) {
-                Box(
+            if (!isFullscreen) {
+                NavigationBar(
                     modifier = Modifier
+                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .height(64.dp)
-                        .clip(RoundedCornerShape(32.dp))
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
+                        .windowInsetsPadding(WindowInsets.navigationBars),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tonalElevation = 3.dp
+                ) {
+                    AppTab.entries.forEach { tab ->
+                        val selected = selectedTab == tab
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { selectedTab = tab },
+                            icon = {
+                                Icon(
+                                    if (selected) tab.selectedIcon else tab.icon,
+                                    contentDescription = tab.title,
+                                    modifier = Modifier.size(22.dp)
                                 )
+                            },
+                            label = {
+                                Text(
+                                    tab.title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 10.sp
+                                )
+                            },
+                            alwaysShowLabel = true,
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer
                             )
                         )
-                ) {
-                    NavigationBar(
-                        containerColor = Color.Transparent,
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        tonalElevation = 0.dp,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        AppTab.entries.forEach { tab ->
-                            val selected = selectedTab == tab
-                            NavigationBarItem(
-                                selected = selected,
-                                onClick = { selectedTab = tab },
-                                icon = {
-                                    Icon(
-                                        if (selected) tab.selectedIcon else tab.icon,
-                                        contentDescription = tab.title,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                },
-                                label = {
-                                    if (selected) {
-                                        Text(
-                                            tab.title,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 10.sp
-                                        )
-                                    }
-                                },
-                                alwaysShowLabel = false,
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                )
-                            )
-                        }
                     }
                 }
             }

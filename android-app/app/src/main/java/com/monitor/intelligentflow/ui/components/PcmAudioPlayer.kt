@@ -78,22 +78,45 @@ class PcmAudioPlayer(
                         AudioTrack.MODE_STREAM,
                         AudioManager.AUDIO_SESSION_ID_GENERATE
                     )
+                    if (track.state != AudioTrack.STATE_INITIALIZED) {
+                        track.release()
+                        throw IOException("音频设备初始化失败")
+                    }
                     audioTrack = track
                     track.play()
 
                     val source = response.body?.byteStream()
                         ?: throw IOException("音频流为空")
-                    val buffer = ByteArray(4096)
+                    val bytesPerFrame = channelCount.coerceIn(1, 2) * 2
+                    val buffer = ByteArray(4096 + bytesPerFrame)
+                    var pendingBytes = 0
                     while (running) {
-                        val read = source.read(buffer)
+                        val read = source.read(buffer, pendingBytes, 4096)
                         if (read <= 0) break
+                        val available = pendingBytes + read
+                        val writableBytes = available - (available % bytesPerFrame)
                         var offset = 0
-                        while (offset < read && running) {
-                            val written = track.write(buffer, offset, read - offset)
+                        while (offset < writableBytes && running) {
+                            val written = track.write(
+                                buffer,
+                                offset,
+                                writableBytes - offset,
+                                AudioTrack.WRITE_BLOCKING
+                            )
                             if (written <= 0) {
-                                throw IOException("音频输出失败")
+                                val detail = when (written) {
+                                    AudioTrack.ERROR_DEAD_OBJECT -> "音频设备连接已中断"
+                                    AudioTrack.ERROR_BAD_VALUE -> "音频数据格式不受支持"
+                                    AudioTrack.ERROR_INVALID_OPERATION -> "音频设备当前不可用"
+                                    else -> "音频输出失败（$written）"
+                                }
+                                throw IOException(detail)
                             }
                             offset += written
+                        }
+                        pendingBytes = available - writableBytes
+                        if (pendingBytes > 0) {
+                            System.arraycopy(buffer, writableBytes, buffer, 0, pendingBytes)
                         }
                     }
                 }

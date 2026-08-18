@@ -94,6 +94,19 @@ class MonitorApiService(
         )
     }
 
+    suspend fun getSelectedStats(): Stats {
+        val raw = get("/api/selected_stats")
+        val j = JSONObject(raw)
+        return Stats(
+            fps = j.optDouble("fps", 0.0),
+            avgLatencyMs = j.optDouble("avg_latency_ms", 0.0),
+            trackedTargets = j.optInt("tracked_targets", 0),
+            gpuUtilization = j.optDouble("gpu_utilization", 0.0),
+            captureStatus = j.optString("capture_status", "-"),
+            captureBackend = j.optString("capture_backend", "-")
+        )
+    }
+
     suspend fun getCaptureInfo(): CaptureInfo {
         val raw = get("/api/capture_info")
         val j = JSONObject(raw)
@@ -242,7 +255,9 @@ class MonitorApiService(
                         filename = item.optString("filename", ""),
                         startedAt = item.optString("started_at", ""),
                         sizeBytes = item.optLong("size_bytes", 0L),
-                        modifiedAt = item.optString("modified_at", "")
+                        modifiedAt = item.optString("modified_at", ""),
+                        deviceId = item.optString("device_id", "local"),
+                        deviceName = item.optString("device_name", "当前设备")
                     )
                 }
             )
@@ -266,12 +281,17 @@ class MonitorApiService(
             ),
             scheduleInWindow = j.optBoolean("schedule_in_window", false),
             recordingActive = j.optBoolean("recording_active", false),
-            recordingStatus = j.optString("recording_status", "-")
+            recordingStatus = j.optString("recording_status", "-"),
+            recordingDeviceId = j.optString("recording_device_id", "local"),
+            recordingDeviceName = j.optString("recording_device_name", "当前设备")
         )
     }
 
     suspend fun getRecordingStatus(): RecordingStatus =
         parseRecordingStatus(get("/api/recording_schedule"))
+
+    suspend fun getSelectedRecordingStatus(): RecordingStatus =
+        parseRecordingStatus(get("/api/selected_recording_status"))
 
     suspend fun setRecordingMode(mode: String) {
         post("/api/recording_mode", JSONObject().put("mode", mode))

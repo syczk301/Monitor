@@ -132,6 +132,7 @@ pub fn router(state: WebState) -> Router {
         .route("/api/audio/info", get(audio_info))
         .route("/api/health", get(health))
         .route("/stats", get(stats))
+        .route("/api/selected_stats", get(selected_stats))
         .route("/api/capture_info", get(capture_info))
         .route("/api/selected_capture_info", get(selected_capture_info))
         .route("/api/local_cameras", get(local_cameras))
@@ -145,7 +146,12 @@ pub fn router(state: WebState) -> Router {
             "/api/recording_schedule",
             get(recording_schedule).post(set_recording_schedule),
         )
+        .route(
+            "/api/selected_recording_status",
+            get(selected_recording_status),
+        )
         .route("/api/local_recording", post(local_recording))
+        .route("/api/local_recordings", get(local_recordings))
         .route("/api/recordings", get(recordings))
         .route("/api/recordings/file", get(recording_file))
         .route("/api/recordings/playback", get(recording_file))
@@ -756,7 +762,7 @@ async fn open_remote_response(
         .map(|(_, value)| value.trim().to_owned())
         .unwrap_or_else(|| "application/octet-stream".into());
     let mut body_bytes = received.split_off(header_end);
-    if path != "/stream" && path != "/api/audio/pcm" {
+    if path != "/stream" && path != "/api/audio/pcm" && !path.starts_with("/api/recordings/file?") {
         timeout(Duration::from_secs(5), socket.read_to_end(&mut body_bytes)).await??;
     }
     Ok((socket, body_bytes, status, content_type))
@@ -772,6 +778,41 @@ async fn stats(State(state): State<WebState>) -> Json<Value> {
         "capture_status": runtime.capture_status,
         "capture_backend": runtime.capture_backend,
     }))
+}
+
+async fn selected_stats(State(state): State<WebState>) -> Response {
+    let remote_node = {
+        let settings = state.settings.read().expect("settings poisoned");
+        settings
+            .selected_camera_key
+            .strip_prefix("remote:")
+            .and_then(|key| key.split_once(':'))
+            .and_then(|(node_index, _)| node_index.parse::<usize>().ok())
+            .and_then(|node_index| settings.remote_nodes.get(node_index).cloned())
+    };
+    let Some(node) = remote_node else {
+        return stats(State(state)).await.into_response();
+    };
+    match open_remote_response(&node, "GET", "/stats", None).await {
+        Ok((_, body, 200, _)) => match serde_json::from_slice::<Value>(&body) {
+            Ok(value) => Json(value).into_response(),
+            Err(error) => (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"detail": format!("远程统计信息解析失败：{error}")})),
+            )
+                .into_response(),
+        },
+        Ok((_, _, status, _)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"detail": format!("远程统计信息请求失败：HTTP {status}")})),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"detail": format!("无法读取远程统计信息：{error}")})),
+        )
+            .into_response(),
+    }
 }
 
 fn schedule_in_window(schedule: &RecordingSchedule) -> bool {
@@ -938,17 +979,14 @@ async fn camera_settings(
     let width = payload.width;
     let height = payload.height;
     let fps = payload.fps;
-    let bitrate = payload.bitrate.unwrap_or_else(|| {
-        state
-            .settings
-            .read()
-            .expect("settings poisoned")
-            .bitrate
-    });
-    if let Err(error) =
-        tokio::task::spawn_blocking(move || controller.set_capture_settings(width, height, fps, bitrate))
-            .await
-            .unwrap_or_else(|error| Err(error.into()))
+    let bitrate = payload
+        .bitrate
+        .unwrap_or_else(|| state.settings.read().expect("settings poisoned").bitrate);
+    if let Err(error) = tokio::task::spawn_blocking(move || {
+        controller.set_capture_settings(width, height, fps, bitrate)
+    })
+    .await
+    .unwrap_or_else(|error| Err(error.into()))
     {
         return internal_error(error);
     }
@@ -1042,7 +1080,54 @@ async fn recording_schedule(State(state): State<WebState>) -> Json<Value> {
         "schedule_in_window": schedule_in_window(&schedule),
         "recording_active": runtime.recording_active,
         "recording_status": runtime.recording_status,
+        "recording_device_id": "local",
+        "recording_device_name": computer_name(),
     }))
+}
+
+async fn selected_recording_status(State(state): State<WebState>) -> Response {
+    let remote_node = {
+        let settings = state.settings.read().expect("settings poisoned");
+        settings
+            .selected_camera_key
+            .strip_prefix("remote:")
+            .and_then(|key| key.split_once(':'))
+            .and_then(|(node_index, _)| {
+                let node_index = node_index.parse::<usize>().ok()?;
+                settings
+                    .remote_nodes
+                    .get(node_index)
+                    .cloned()
+                    .map(|node| (node_index, node))
+            })
+    };
+    let Some((node_index, node)) = remote_node else {
+        return recording_schedule(State(state)).await.into_response();
+    };
+    match open_remote_response(&node, "GET", "/api/recording_schedule", None).await {
+        Ok((_, body, 200, _)) => match serde_json::from_slice::<Value>(&body) {
+            Ok(mut value) => {
+                value["recording_device_id"] = json!(format!("remote:{node_index}"));
+                value["recording_device_name"] = json!(node.name);
+                Json(value).into_response()
+            }
+            Err(error) => (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"detail": format!("远端录像状态解析失败：{error}")})),
+            )
+                .into_response(),
+        },
+        Ok((_, _, status, _)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"detail": format!("远端录像状态请求失败：HTTP {status}")})),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"detail": format!("无法读取远端录像状态：{error}")})),
+        )
+            .into_response(),
+    }
 }
 
 async fn set_recording_schedule(
@@ -1100,34 +1185,125 @@ async fn local_recording(
     .await
 }
 
+fn local_recording_groups(settings: &Settings) -> Result<Vec<Value>> {
+    let device_name = computer_name();
+    let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
+    for item in list_recordings(settings)? {
+        let entry = json!({
+            "relative_path": item.path,
+            "filename": item.name,
+            "started_at": item.modified_at.to_rfc3339(),
+            "size_bytes": item.size_bytes,
+            "modified_at": item.modified_at.to_rfc3339(),
+            "device_id": "local",
+            "device_name": device_name,
+        });
+        if let Some((_, entries)) = groups.iter_mut().find(|(day, _)| day == &item.day) {
+            entries.push(entry);
+        } else {
+            groups.push((item.day, vec![entry]));
+        }
+    }
+    Ok(groups
+        .into_iter()
+        .map(|(day, items)| json!({ "day": day, "items": items }))
+        .collect())
+}
+
+async fn local_recordings(State(state): State<WebState>) -> Response {
+    let settings = state.settings.read().expect("settings poisoned").clone();
+    match local_recording_groups(&settings) {
+        Ok(groups) => Json(groups).into_response(),
+        Err(error) => internal_error(error),
+    }
+}
+
 async fn recordings(State(state): State<WebState>) -> Response {
     let settings = state.settings.read().expect("settings poisoned").clone();
-    match list_recordings(&settings) {
-        Ok(items) => {
-            let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
-            for item in items {
-                let entry = json!({
-                    "relative_path": item.path,
-                    "filename": item.name,
-                    "started_at": item.modified_at.to_rfc3339(),
-                    "size_bytes": item.size_bytes,
-                    "modified_at": item.modified_at.to_rfc3339(),
-                });
-                if let Some((_, entries)) = groups.iter_mut().find(|(day, _)| day == &item.day) {
-                    entries.push(entry);
-                } else {
-                    groups.push((item.day, vec![entry]));
-                }
-            }
-            Json(
-                groups
-                    .into_iter()
-                    .map(|(day, items)| json!({ "day": day, "items": items }))
-                    .collect::<Vec<_>>(),
-            )
-            .into_response()
+    let local_groups = match local_recording_groups(&settings) {
+        Ok(groups) => groups,
+        Err(error) => return internal_error(error),
+    };
+    let mut groups: Vec<(String, Vec<Value>)> = Vec::new();
+    merge_recording_groups(&mut groups, local_groups, None);
+
+    for (node_index, node) in settings.remote_nodes.iter().enumerate() {
+        let response = match open_remote_response(node, "GET", "/api/local_recordings", None).await
+        {
+            Ok((_, body, 200, _)) => Some(body),
+            _ => match open_remote_response(node, "GET", "/api/recordings", None).await {
+                Ok((_, body, 200, _)) => Some(body),
+                _ => None,
+            },
+        };
+        let Some(body) = response else { continue };
+        if body.len() > 8 * 1024 * 1024 {
+            tracing::warn!(node = %node.address, "remote recording list is too large");
+            continue;
         }
-        Err(error) => internal_error(error),
+        let Ok(remote_groups) = serde_json::from_slice::<Vec<Value>>(&body) else {
+            tracing::warn!(node = %node.address, "remote recording list is invalid");
+            continue;
+        };
+        let remote_name = fetch_remote_computer_name(node)
+            .await
+            .unwrap_or_else(|| node.name.clone());
+        merge_recording_groups(
+            &mut groups,
+            remote_groups,
+            Some((node_index, remote_name.as_str())),
+        );
+    }
+
+    groups.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, items) in &mut groups {
+        items.sort_by(|left, right| {
+            right["started_at"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(left["started_at"].as_str().unwrap_or_default())
+        });
+    }
+    Json(
+        groups
+            .into_iter()
+            .map(|(day, items)| json!({ "day": day, "items": items }))
+            .collect::<Vec<_>>(),
+    )
+    .into_response()
+}
+
+fn merge_recording_groups(
+    target: &mut Vec<(String, Vec<Value>)>,
+    source: Vec<Value>,
+    remote: Option<(usize, &str)>,
+) {
+    for group in source {
+        let Some(day) = group.get("day").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(items) = group.get("items").and_then(Value::as_array) else {
+            continue;
+        };
+        let destination = if let Some((_, entries)) = target.iter_mut().find(|(key, _)| key == day)
+        {
+            entries
+        } else {
+            target.push((day.to_owned(), Vec::new()));
+            &mut target.last_mut().expect("group was inserted").1
+        };
+        for item in items {
+            let mut item = item.clone();
+            if let Some((node_index, device_name)) = remote {
+                let Some(remote_path) = item.get("relative_path").and_then(Value::as_str) else {
+                    continue;
+                };
+                item["relative_path"] = json!(format!("remote:{node_index}:{remote_path}"));
+                item["device_id"] = json!(format!("remote:{node_index}"));
+                item["device_name"] = json!(device_name);
+            }
+            destination.push(item);
+        }
     }
 }
 
@@ -1142,6 +1318,59 @@ async fn recording_file(
     request: Request<Body>,
 ) -> Response {
     let settings = state.settings.read().expect("settings poisoned").clone();
+    if let Some(remote) = query.path.strip_prefix("remote:") {
+        let Some((node_index, remote_path)) = remote.split_once(':') else {
+            return (StatusCode::BAD_REQUEST, "invalid remote recording id").into_response();
+        };
+        let Ok(node_index) = node_index.parse::<usize>() else {
+            return (StatusCode::BAD_REQUEST, "invalid remote node id").into_response();
+        };
+        let Some(node) = settings.remote_nodes.get(node_index) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let remote_uri = format!(
+            "/api/recordings/file?path={}",
+            percent_encode_query(remote_path)
+        );
+        let (mut socket, initial, status, content_type) =
+            match open_remote_response(node, "GET", &remote_uri, None).await {
+                Ok(response) => response,
+                Err(error) => return (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
+            };
+        if status != 200 {
+            return (
+                StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+                "remote recording is unavailable",
+            )
+                .into_response();
+        }
+        let body = Body::from_stream(stream! {
+            if !initial.is_empty() {
+                yield Ok::<Bytes, std::io::Error>(Bytes::from(initial));
+            }
+            let mut buffer = vec![0u8; 64 * 1024];
+            loop {
+                match socket.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(read) => yield Ok::<Bytes, std::io::Error>(Bytes::copy_from_slice(&buffer[..read])),
+                    Err(error) => {
+                        yield Err(error);
+                        break;
+                    }
+                }
+            }
+        });
+        let mut response = Response::new(body);
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_str(&content_type)
+                .unwrap_or_else(|_| HeaderValue::from_static("video/mp4")),
+        );
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
+    }
     let path = match resolve_recording(&settings, &query.path) {
         Ok(path) => path,
         Err(error) => return (StatusCode::NOT_FOUND, error.to_string()).into_response(),
@@ -1150,6 +1379,21 @@ async fn recording_file(
         Ok(response) => response.map(Body::new),
         Err(error) => internal_error(error),
     }
+}
+
+fn percent_encode_query(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
 }
 
 #[derive(Deserialize)]
@@ -1383,6 +1627,32 @@ mod tests {
         assert_eq!(
             camera_display_name("DESKTOP-CAMERA", "USB Camera"),
             "DESKTOP-CAMERA · USB Camera"
+        );
+    }
+
+    #[test]
+    fn recording_query_path_is_percent_encoded() {
+        assert_eq!(
+            percent_encode_query("active:2026-08-18/file 01.mp4"),
+            "active%3A2026-08-18%2Ffile%2001.mp4"
+        );
+    }
+
+    #[test]
+    fn remote_recordings_are_tagged_with_device() {
+        let mut target = Vec::new();
+        merge_recording_groups(
+            &mut target,
+            vec![json!({
+                "day": "2026-08-18",
+                "items": [{"relative_path":"active:2026-08-18/test.mp4","started_at":"2026-08-18T10:00:00+08:00"}]
+            })],
+            Some((0, "PC-ZKK")),
+        );
+        assert_eq!(target[0].1[0]["device_name"], "PC-ZKK");
+        assert_eq!(
+            target[0].1[0]["relative_path"],
+            "remote:0:active:2026-08-18/test.mp4"
         );
     }
 }

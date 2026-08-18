@@ -82,7 +82,9 @@ data class RecordingFile(
     val filename: String,
     val startedAt: String,
     val sizeBytes: Long,
-    val modifiedAt: String
+    val modifiedAt: String,
+    val deviceId: String = "local",
+    val deviceName: String = "当前设备"
 )
 
 data class RecordingGroup(
@@ -107,5 +109,7 @@ data class RecordingStatus(
     val schedule: RecordingSchedule = RecordingSchedule(),
     val scheduleInWindow: Boolean = false,
     val recordingActive: Boolean = false,
-    val recordingStatus: String = "-"
+    val recordingStatus: String = "-",
+    val recordingDeviceId: String = "local",
+    val recordingDeviceName: String = "当前设备"
 )

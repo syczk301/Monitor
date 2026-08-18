@@ -2,9 +2,11 @@ package com.monitor.intelligentflow.ui.screens
 
 import android.app.Activity
 import android.content.pm.ActivityInfo
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,8 +22,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,10 +44,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monitor.intelligentflow.data.CameraDevice
@@ -52,6 +59,7 @@ import com.monitor.intelligentflow.ui.components.PcmAudioPlayer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun MonitorScreen(
@@ -60,6 +68,7 @@ fun MonitorScreen(
     onFullscreenChange: (Boolean) -> Unit = {}
 ) {
     var stats by remember { mutableStateOf(Stats()) }
+    var streamFps by remember { mutableStateOf(0.0) }
     var recordingStatus by remember { mutableStateOf<RecordingStatus?>(null) }
     var connected by remember { mutableStateOf(false) }
     var isFullscreen by remember { mutableStateOf(false) }
@@ -85,23 +94,20 @@ fun MonitorScreen(
     fun enterFullscreen() {
         isFullscreen = true
         onFullscreenChange(true)
-        (context as? Activity)?.requestedOrientation =
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        (context as? Activity)?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
 
     fun exitFullscreen() {
         isFullscreen = false
         onFullscreenChange(false)
-        (context as? Activity)?.requestedOrientation =
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        (context as? Activity)?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     BackHandler(enabled = isFullscreen) { exitFullscreen() }
 
     DisposableEffect(Unit) {
         onDispose {
-            (context as? Activity)?.requestedOrientation =
-                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            (context as? Activity)?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             audioPlayer.stop()
         }
     }
@@ -109,15 +115,17 @@ fun MonitorScreen(
     DisposableEffect(audioEnabled, selectedAudioUrl, api) {
         if (audioEnabled) {
             audioError = null
-            audioPlayer.start(
-                url = selectedAudioUrl,
-                authHeader = api.audioAuthHeader()
-            )
+            audioPlayer.start(url = selectedAudioUrl, authHeader = api.audioAuthHeader())
         } else {
             audioPlayer.stop()
         }
-        onDispose {
-            audioPlayer.stop()
+        onDispose { audioPlayer.stop() }
+    }
+
+    LaunchedEffect(audioError) {
+        if (audioError != null) {
+            delay(4_000)
+            audioError = null
         }
     }
 
@@ -137,17 +145,25 @@ fun MonitorScreen(
         }
     }
 
-    LaunchedEffect(api) {
+    LaunchedEffect(api, selectedCameraId) {
+        stats = Stats()
         while (isActive) {
-            try { stats = api.getStats(); connected = true }
-            catch (_: Exception) { connected = false }
+            try {
+                val startedNs = SystemClock.elapsedRealtimeNanos()
+                val selectedStats = api.getSelectedStats()
+                val roundTripMs = (SystemClock.elapsedRealtimeNanos() - startedNs) / 1_000_000.0
+                stats = selectedStats.copy(avgLatencyMs = roundTripMs)
+                connected = true
+            } catch (_: Exception) {
+                connected = false
+            }
             delay(1000)
         }
     }
 
-    LaunchedEffect(api) {
+    LaunchedEffect(api, selectedCameraId) {
         while (isActive) {
-            try { recordingStatus = api.getRecordingStatus() }
+            try { recordingStatus = api.getSelectedRecordingStatus() }
             catch (_: Exception) { recordingStatus = null }
             delay(10_000)
         }
@@ -160,8 +176,9 @@ fun MonitorScreen(
                 authHeader = api.streamAuthHeader(),
                 isFullscreen = fullscreen,
                 onToggleFullscreen = { if (fullscreen) exitFullscreen() else enterFullscreen() },
-                modifier = if (fullscreen) Modifier.fillMaxSize()
-                else Modifier.clip(RoundedCornerShape(20.dp))
+                onStreamFps = { streamFps = it },
+                showFullscreenControl = fullscreen,
+                modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
             )
         }
     }
@@ -170,7 +187,12 @@ fun MonitorScreen(
         if (isFullscreen) {
             mjpegContent(selectedStreamUrl, true)
         } else {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp)
+            ) {
                 CameraSelector(
                     cameras = cameras,
                     selectedId = selectedCamera?.id,
@@ -194,94 +216,76 @@ fun MonitorScreen(
                     }
                 )
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .shadow(elevation = 8.dp, shape = RoundedCornerShape(24.dp), spotColor = Color(0x1A000000))
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(4.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color.Black)
                 ) {
                     mjpegContent(selectedStreamUrl, false)
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .background(Color.Black.copy(alpha = 0.72f))
+                            .padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        IconButton(onClick = { enterFullscreen() }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Rounded.Fullscreen, "全屏", tint = Color.White, modifier = Modifier.size(22.dp))
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            StatusDot(if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.width(7.dp))
+                            Text(
+                                if (connected) "直播中" else "连接中",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        IconButton(onClick = { audioEnabled = !audioEnabled }, modifier = Modifier.size(40.dp)) {
+                            Icon(
+                                if (audioEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff,
+                                if (audioEnabled) "关闭声音" else "开启声音",
+                                tint = Color.White,
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+                    }
                 }
 
-                Spacer(Modifier.height(24.dp))
+                audioError?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+
+                RecordingRow(recordingStatus)
+
+                Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline))
 
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilledTonalButton(
-                        onClick = { audioEnabled = !audioEnabled },
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Text(if (audioEnabled) "关闭声音" else "开启声音", fontWeight = FontWeight.Bold)
-                    }
-                    Text(
-                        text = audioError ?: if (audioEnabled) "正在播放当前摄像头声音" else "声音默认关闭",
-                        modifier = Modifier.align(Alignment.CenterVertically),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (audioError == null) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.error
-                        }
+                    val displayedFps = streamFps.takeIf { it > 0.0 } ?: stats.fps
+                    HudStat("FPS", "%.1f".format(displayedFps), MaterialTheme.colorScheme.onSurface)
+                    HudDivider()
+                    val pingText = if (connected) "${stats.avgLatencyMs.roundToInt().coerceAtLeast(1)} ms" else "—"
+                    HudStat("PING", pingText, MaterialTheme.colorScheme.onSurface)
+                    HudDivider()
+                    val recordingActive = recordingStatus?.recordingActive == true
+                    HudStat(
+                        "REC",
+                        if (recordingActive) "●" else "—",
+                        if (recordingActive) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .shadow(elevation = 2.dp, shape = RoundedCornerShape(20.dp), spotColor = Color(0x0D000000))
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
-                        .padding(horizontal = 16.dp, vertical = 16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        HudStat("FPS", "%.1f".format(stats.fps), MaterialTheme.colorScheme.onSurface)
-                        HudDivider()
-                        HudStat("PING", "${stats.avgLatencyMs.toInt()}ms", MaterialTheme.colorScheme.onSurface)
-                        HudDivider()
-                        HudStat("PEOPLE", "${stats.trackedTargets}", MaterialTheme.colorScheme.primary)
-                        HudDivider()
-                        HudStat("GPU", "${stats.gpuUtilization.toInt()}%", MaterialTheme.colorScheme.secondary)
-                        HudDivider()
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                if (stats.captureStatus == "running") "REC" else "OFF",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.5.sp
-                            )
-                        }
-                    }
-                }
-
-                recordingStatus?.takeIf { it.mode == "schedule" }?.let { status ->
-                    Spacer(Modifier.height(12.dp))
-                    ScheduleStatusCard(status)
                 }
             }
         }
@@ -294,160 +298,147 @@ private fun CameraSelector(
     selectedId: String?,
     switching: Boolean,
     error: String?,
-    onSelect: (CameraDevice) -> Unit,
-    modifier: Modifier = Modifier
+    onSelect: (CameraDevice) -> Unit
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "摄像头${if (cameras.isNotEmpty()) "（${cameras.size}）" else ""}",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            if (switching) {
-                Text(
-                    text = "正在切换…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
+    Column {
         if (cameras.isEmpty()) {
             Text(
-                text = error ?: "正在读取摄像头…",
+                error ?: "正在读取摄像头…",
+                color = if (error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (error == null) MaterialTheme.colorScheme.onSurfaceVariant
-                else MaterialTheme.colorScheme.error
+                modifier = Modifier.padding(vertical = 12.dp)
             )
-        } else {
+            return@Column
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(62.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
             cameras.forEach { camera ->
                 val selected = camera.id == selectedId
-                FilledTonalButton(
-                    onClick = { onSelect(camera) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = camera.online && !switching,
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f) else Color.Transparent)
+                        .then(
+                            if (selected) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(9.dp))
+                            else Modifier
+                        )
+                        .clickable(enabled = camera.online && !switching) { onSelect(camera) }
+                        .padding(horizontal = 10.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (camera.online) MaterialTheme.colorScheme.tertiary
-                                else MaterialTheme.colorScheme.error
-                            )
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = camera.name,
-                        modifier = Modifier.weight(1f),
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                    )
-                    Text(
-                        text = when {
-                            !camera.online -> "离线"
-                            selected -> "当前"
-                            else -> "切换"
-                        },
-                        style = MaterialTheme.typography.labelMedium
-                    )
+                    StatusDot(if (camera.online) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(7.dp))
+                    val nameParts = camera.name.split(" · ", limit = 2)
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                        Text(
+                            nameParts.first(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            nameParts.getOrElse(1) { if (camera.source == "remote") "远端摄像头" else "本机摄像头" },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
-                Spacer(Modifier.height(6.dp))
             }
-            error?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
+        }
+        error?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
-private fun ScheduleStatusCard(status: RecordingStatus, modifier: Modifier = Modifier) {
-    val inWindow = status.scheduleInWindow
-    val accent = if (inWindow) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
+private fun RecordingRow(status: RecordingStatus?) {
+    val active = status?.recordingActive == true
+    val schedule = status?.schedule
+    val deviceName = status?.recordingDeviceName ?: "当前设备"
+    val title = when {
+        status == null -> "正在读取录像状态"
+        active -> "正在录像 · $deviceName"
+        status.mode == "schedule" -> "定时录像待机 · $deviceName"
+        else -> "录像未开启 · $deviceName"
+    }
+    val subtitle = schedule?.let { "${it.daysText()} · ${it.start}–${it.end}" } ?: "状态同步中"
+
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 17.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             Modifier
-                .size(8.dp)
+                .size(34.dp)
                 .clip(CircleShape)
-                .background(accent)
-        )
-        Spacer(Modifier.width(10.dp))
-        Column {
-            Text(
-                text = if (inWindow) "定时录制 · 时段内正在录像" else "定时录制 · 当前在时段外",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = accent
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = "${status.schedule.daysText()} ${status.schedule.start}–${status.schedule.end}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                .background(if (active) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            StatusDot(if (active) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(2.dp))
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f))
     }
 }
 
 @Composable
+private fun StatusDot(color: Color) {
+    Box(Modifier.size(7.dp).clip(CircleShape).background(color))
+}
+
+@Composable
 private fun HudStat(label: String, value: String, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = color,
-            fontSize = 16.sp
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.5.sp
-        )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = Modifier.width(104.dp)
+    ) {
+        if (label == "REC") {
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f))
+                    .padding(horizontal = 13.dp, vertical = 8.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(value, fontWeight = FontWeight.ExtraBold, color = color, fontSize = 16.sp)
+                    Spacer(Modifier.width(7.dp))
+                    Text(label, color = color, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, letterSpacing = 0.5.sp)
+                }
+            }
+        } else {
+            Text(value, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, fontSize = 22.sp)
+            Spacer(Modifier.width(7.dp))
+            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        }
     }
 }
 
 @Composable
 private fun HudDivider() {
-    Box(
-        Modifier
-            .width(1.dp)
-            .height(24.dp)
-            .background(MaterialTheme.colorScheme.outline)
-    )
+    Box(Modifier.width(1.dp).height(30.dp).background(MaterialTheme.colorScheme.outline))
 }

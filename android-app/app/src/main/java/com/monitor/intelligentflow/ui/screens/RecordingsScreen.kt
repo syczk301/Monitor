@@ -5,6 +5,8 @@ import android.widget.MediaController
 import android.widget.VideoView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -54,6 +57,8 @@ import com.monitor.intelligentflow.data.RecordingStatus
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -69,6 +74,18 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
     var recStatus by remember { mutableStateOf<RecordingStatus?>(null) }
     var savingSchedule by remember { mutableStateOf(false) }
     var scheduleMsg by remember { mutableStateOf<String?>(null) }
+    var selectedDeviceId by remember { mutableStateOf("all") }
+    var knownDevices by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+
+    val devices = (knownDevices + groups
+        .flatMap { it.items }
+        .map { it.deviceId to it.deviceName })
+        .distinctBy { it.first }
+    val visibleGroups = groups.mapNotNull { group ->
+        val items = if (selectedDeviceId == "all") group.items
+        else group.items.filter { it.deviceId == selectedDeviceId }
+        items.takeIf { it.isNotEmpty() }?.let { group.copy(items = it) }
+    }
 
     fun loadRecordingStatus() {
         scope.launch {
@@ -110,6 +127,14 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
             errorMsg = null
             try {
                 groups = api.getRecordings()
+                knownDevices = runCatching { api.getCameras() }
+                    .getOrNull()
+                    ?.cameras
+                    ?.map { camera ->
+                        recordingDeviceId(camera.id) to camera.name.substringBefore(" · ")
+                    }
+                    ?.distinctBy { it.first }
+                    .orEmpty()
             } catch (e: Exception) {
                 errorMsg = e.message
             }
@@ -134,6 +159,12 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         refresh()
         loadRecordingStatus()
+    }
+
+    LaunchedEffect(devices, selectedDeviceId) {
+        if (selectedDeviceId != "all" && devices.none { it.first == selectedDeviceId }) {
+            selectedDeviceId = "all"
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -164,6 +195,16 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(12.dp))
 
+        if (devices.isNotEmpty()) {
+            DeviceFilter(
+                devices = devices,
+                selectedId = selectedDeviceId,
+                onSelect = { selectedDeviceId = it },
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
         if (selectedRecording != null && localVideoFile != null) {
             RecordingPlayerCard(
                 file = localVideoFile!!,
@@ -184,18 +225,18 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
                     Text("加载失败: $errorMsg", color = MaterialTheme.colorScheme.error)
                 }
             }
-            groups.isEmpty() -> {
+            visibleGroups.isEmpty() -> {
                 Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Text("暂无可播放录像", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("该设备暂无可播放录像", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             else -> {
                 LazyColumn(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(groups, key = { it.day }) { group ->
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(visibleGroups, key = { it.day }) { group ->
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
                                 text = group.day,
                                 style = MaterialTheme.typography.labelLarge,
@@ -215,6 +256,64 @@ fun RecordingsScreen(api: MonitorApiService, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DeviceFilter(
+    devices: List<Pair<String, String>>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        DeviceChip("all", "全部设备", selectedId == "all", onSelect)
+        devices.forEach { (id, name) ->
+            DeviceChip(id, name, selectedId == id, onSelect)
+        }
+    }
+}
+
+@Composable
+private fun DeviceChip(
+    id: String,
+    label: String,
+    selected: Boolean,
+    onSelect: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(11.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceVariant
+            )
+            .clickable { onSelect(id) }
+            .padding(horizontal = 13.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(
+                    if (selected) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.tertiary
+                )
+        )
+        Spacer(Modifier.size(7.dp))
+        Text(
+            label,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -388,6 +487,12 @@ private fun RecordingPlayerCard(file: File, recording: RecordingFile, modifier: 
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
+                text = recording.deviceName,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
                 text = recording.filename,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
@@ -435,46 +540,58 @@ private fun RecordingItemCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-        )
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(horizontal = 14.dp, vertical = 11.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text(item.filename, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    item.deviceName,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "${formatRecordingClock(item.startedAt)} 录像",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodyLarge
+                )
                 Text(
                     "${formatRecordingTime(item.startedAt)}  ·  ${formatRecordingSize(item.sizeBytes)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    item.relativePath,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
-            FilledTonalButton(
+            IconButton(
                 onClick = onPlay,
                 enabled = !downloading,
-                shape = RoundedCornerShape(12.dp)
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer)
             ) {
                 if (downloading) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 } else {
-                    Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(
+                        Icons.Rounded.PlayCircle,
+                        contentDescription = "播放 ${formatRecordingClock(item.startedAt)} 录像",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
-                Spacer(Modifier.size(6.dp))
-                Text(if (downloading) "加载中" else "播放", fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -482,11 +599,26 @@ private fun RecordingItemCard(
 
 private fun formatRecordingTime(raw: String): String {
     return try {
-        val dt = LocalDateTime.parse(raw)
+        val dt = OffsetDateTime.parse(raw).atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime()
         dt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
     } catch (_: Exception) {
-        raw
+        try {
+            LocalDateTime.parse(raw).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+        } catch (_: Exception) {
+            raw
+        }
     }
+}
+
+private fun formatRecordingClock(raw: String): String {
+    val formatted = formatRecordingTime(raw)
+    return if (formatted.length >= 16) formatted.substring(11, 16) else formatted
+}
+
+private fun recordingDeviceId(cameraId: String): String {
+    if (!cameraId.startsWith("remote:")) return "local"
+    val nodeIndex = cameraId.removePrefix("remote:").substringBefore(':')
+    return "remote:$nodeIndex"
 }
 
 private fun formatRecordingSize(size: Long): String {
