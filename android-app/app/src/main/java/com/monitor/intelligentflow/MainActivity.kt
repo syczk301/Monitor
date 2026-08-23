@@ -100,7 +100,7 @@ class AppConfigRepository(private val context: Context) {
         .catch { emit(emptyPreferences()) }
         .map { prefs ->
             AppConfig(
-                baseUrl = prefs[baseUrlKey] ?: "",
+                baseUrl = (prefs[baseUrlKey] ?: "").replaceFirst("http://", "https://"),
                 username = prefs[usernameKey] ?: "",
                 password = prefs[passwordKey] ?: ""
             )
@@ -142,7 +142,7 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
         val normalized = normalizeBaseUrl(baseUrl)
         if (normalized == null) {
             _uiState.value = _uiState.value.copy(
-                errorMessage = "地址必须以 http:// 或 https:// 开头"
+                errorMessage = "安全连接地址必须以 https:// 开头"
             )
             return
         }
@@ -177,7 +177,7 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
     private fun normalizeBaseUrl(raw: String): String? {
         val trimmed = raw.trim().removeSuffix("/")
         if (trimmed.isBlank()) return null
-        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return null
+        if (!trimmed.startsWith("https://")) return null
         return try {
             val uri = URI(trimmed)
             if (uri.host.isNullOrBlank()) null else trimmed

@@ -66,8 +66,7 @@ impl RecordingSchedule {
         if start == end {
             return false;
         }
-        let day_enabled =
-            |day: u8| self.days.is_empty() || self.days.contains(&day);
+        let day_enabled = |day: u8| self.days.is_empty() || self.days.contains(&day);
         if start < end {
             day_enabled(weekday_iso) && minute_of_day >= start && minute_of_day < end
         } else {
@@ -131,6 +130,10 @@ pub struct AppPaths {
     pub logs: PathBuf,
     pub settings: PathBuf,
     pub database: PathBuf,
+    pub tls: PathBuf,
+    pub tls_ca: PathBuf,
+    pub tls_cert: PathBuf,
+    pub tls_key: PathBuf,
 }
 
 impl AppPaths {
@@ -142,6 +145,10 @@ impl AppPaths {
             logs: root.join("logs"),
             settings: root.join("settings.json"),
             database: root.join("data").join("monitor.db"),
+            tls: root.join("tls"),
+            tls_ca: root.join("tls").join("ca.crt"),
+            tls_cert: root.join("tls").join("server.crt"),
+            tls_key: root.join("tls").join("server.key"),
             root,
         })
     }
@@ -149,6 +156,7 @@ impl AppPaths {
     pub fn ensure(&self) -> Result<()> {
         fs::create_dir_all(&self.data)?;
         fs::create_dir_all(&self.logs)?;
+        fs::create_dir_all(&self.tls)?;
         Ok(())
     }
 }
@@ -504,6 +512,10 @@ mod tests {
             logs: root.join("logs"),
             settings: root.join("settings.json"),
             database: root.join("data/monitor.db"),
+            tls: root.join("tls"),
+            tls_ca: root.join("tls/ca.crt"),
+            tls_cert: root.join("tls/server.crt"),
+            tls_key: root.join("tls/server.key"),
             root,
         };
         let mut settings = Settings::default();

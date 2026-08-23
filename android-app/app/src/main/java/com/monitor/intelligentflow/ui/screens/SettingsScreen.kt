@@ -139,7 +139,7 @@ fun SettingsScreen(
             onValueChange = { baseUrl = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("服务器地址") },
-            placeholder = { Text("https://设备名.ts.net") },
+            placeholder = { Text("https://10.95.194.185:8000") },
             leadingIcon = { Icon(Icons.Rounded.Wifi, null, Modifier.size(20.dp)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -189,8 +189,7 @@ fun SettingsScreen(
         Button(
             onClick = {
                 val url = baseUrl.trim().let {
-                    if (it.isNotEmpty() && !it.startsWith("http://") && !it.startsWith("https://"))
-                        "http://$it" else it
+                    if (it.isNotEmpty() && !it.startsWith("https://")) "https://$it" else it
                 }
                 onSave(url, username, password)
             },

@@ -19,16 +19,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     convert::Infallible,
+    env,
+    fs::File,
+    io::BufReader,
     net::SocketAddr,
+    path::PathBuf,
+    pin::Pin,
     sync::{Arc, RwLock},
     time::Duration,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
     sync::watch,
     time::timeout,
 };
+use tokio_rustls::TlsConnector;
 use tower::ServiceExt;
 use tower_http::{compression::CompressionLayer, services::ServeFile, trace::TraceLayer};
 
@@ -105,18 +111,27 @@ pub async fn serve(state: WebState, shutdown: watch::Receiver<bool>) -> Result<(
         .expect("settings poisoned")
         .bind_address
         .parse()?;
+    let tls_cert = state.paths.tls_cert.clone();
+    let tls_key = state.paths.tls_key.clone();
     let app = router(state);
-    let listener = tokio::net::TcpListener::bind(address).await?;
-    tracing::info!(%address, "Rust native web server started");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let mut shutdown = shutdown;
-            while !*shutdown.borrow() {
-                if shutdown.changed().await.is_err() {
-                    break;
-                }
+    let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(tls_cert, tls_key)
+        .await
+        .context("Camera Monitor TLS certificate or private key could not be loaded")?;
+    let handle = axum_server::Handle::new();
+    let shutdown_handle = handle.clone();
+    tokio::spawn(async move {
+        let mut shutdown = shutdown;
+        while !*shutdown.borrow() {
+            if shutdown.changed().await.is_err() {
+                break;
             }
-        })
+        }
+        shutdown_handle.graceful_shutdown(Some(Duration::from_secs(5)));
+    });
+    tracing::info!(%address, "Rust native HTTPS server started");
+    axum_server::bind_rustls(address, tls_config)
+        .handle(handle)
+        .serve(app.into_make_service())
         .await?;
     Ok(())
 }
@@ -182,6 +197,8 @@ async fn health(State(state): State<WebState>) -> Json<Value> {
     Json(json!({
         "status": if runtime.last_error.is_empty() { "ok" } else { "degraded" },
         "runtime": "rust-native",
+        "protocol": "https",
+        "version": env!("CARGO_PKG_VERSION"),
         "computer_name": computer_name(),
         "fps": runtime.fps,
         "inference_fps": 0.0,
@@ -454,17 +471,25 @@ async fn add_remote_node(
     State(state): State<WebState>,
     Json(payload): Json<RemoteNodePayload>,
 ) -> Response {
-    let address = payload.address.trim();
-    if address.parse::<SocketAddr>().is_err() || payload.name.trim().is_empty() {
+    let raw_address = payload.address.trim();
+    let address = if raw_address.contains("://") {
+        raw_address.to_owned()
+    } else {
+        format!("https://{raw_address}")
+    };
+    let valid_https = parse_remote_endpoint(&address)
+        .map(|endpoint| endpoint.tls)
+        .unwrap_or(false);
+    if !valid_https || payload.name.trim().is_empty() {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"detail":"name and address (IP:port) are required"})),
+            Json(json!({"detail":"name and HTTPS address (IP:port) are required"})),
         )
             .into_response();
     }
     let node = RemoteNode {
         name: payload.name.trim().to_owned(),
-        address: address.to_owned(),
+        address,
     };
     {
         let mut settings = state.settings.write().expect("settings poisoned");
@@ -715,16 +740,13 @@ async fn open_remote_response(
     method: &str,
     path: &str,
     body: Option<&[u8]>,
-) -> Result<(TcpStream, Vec<u8>, u16, String)> {
-    let mut socket = timeout(
-        Duration::from_millis(1200),
-        TcpStream::connect(&node.address),
-    )
-    .await??;
+) -> Result<(RemoteStream, Vec<u8>, u16, String)> {
+    let endpoint = parse_remote_endpoint(&node.address)?;
+    let mut socket = connect_remote(&endpoint).await?;
     let body = body.unwrap_or_default();
     let request = format!(
         "{method} {path} HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        node.address,
+        endpoint.authority,
         body.len()
     );
     socket.write_all(request.as_bytes()).await?;
@@ -766,6 +788,81 @@ async fn open_remote_response(
         timeout(Duration::from_secs(5), socket.read_to_end(&mut body_bytes)).await??;
     }
     Ok((socket, body_bytes, status, content_type))
+}
+
+trait AsyncRemoteStream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T> AsyncRemoteStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
+type RemoteStream = Pin<Box<dyn AsyncRemoteStream>>;
+
+#[derive(Debug)]
+struct RemoteEndpoint {
+    tls: bool,
+    authority: String,
+    socket: SocketAddr,
+}
+
+fn parse_remote_endpoint(address: &str) -> Result<RemoteEndpoint> {
+    let address = address.trim().trim_end_matches('/');
+    let (tls, authority) = if let Some(value) = address.strip_prefix("https://") {
+        (true, value)
+    } else if let Some(value) = address.strip_prefix("http://") {
+        (false, value)
+    } else {
+        (false, address)
+    };
+    let socket = authority
+        .parse::<SocketAddr>()
+        .with_context(|| format!("invalid remote monitor address: {address}"))?;
+    Ok(RemoteEndpoint {
+        tls,
+        authority: authority.to_owned(),
+        socket,
+    })
+}
+
+async fn connect_remote(endpoint: &RemoteEndpoint) -> Result<RemoteStream> {
+    if !endpoint.tls {
+        anyhow::bail!("remote Camera Monitor connections require HTTPS");
+    }
+    let socket = timeout(
+        Duration::from_millis(1200),
+        TcpStream::connect(endpoint.socket),
+    )
+    .await??;
+    let ca_path = private_ca_path()?;
+    let mut ca_reader =
+        BufReader::new(File::open(&ca_path).with_context(|| {
+            format!("private CA certificate is missing: {}", ca_path.display())
+        })?);
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in rustls_pemfile::certs(&mut ca_reader) {
+        roots.add(certificate?)?;
+    }
+    if roots.is_empty() {
+        anyhow::bail!("private CA certificate contains no certificates");
+    }
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let connector = TlsConnector::from(Arc::new(config));
+    let server_name = rustls::pki_types::ServerName::IpAddress(endpoint.socket.ip().into());
+    let tls_stream = timeout(
+        Duration::from_secs(3),
+        connector.connect(server_name, socket),
+    )
+    .await??;
+    Ok(Box::pin(tls_stream))
+}
+
+fn private_ca_path() -> Result<PathBuf> {
+    if let Some(path) = env::var_os("CAMERA_MONITOR_TLS_CA") {
+        return Ok(PathBuf::from(path));
+    }
+    let local = env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is unavailable")?;
+    Ok(PathBuf::from(local)
+        .join("CameraMonitor")
+        .join("tls")
+        .join("ca.crt"))
 }
 
 async fn stats(State(state): State<WebState>) -> Json<Value> {
@@ -1628,6 +1725,17 @@ mod tests {
             camera_display_name("DESKTOP-CAMERA", "USB Camera"),
             "DESKTOP-CAMERA · USB Camera"
         );
+    }
+
+    #[test]
+    fn remote_endpoint_preserves_https_ip_identity() {
+        let endpoint = parse_remote_endpoint("https://10.95.194.233:8000/").unwrap();
+        assert!(endpoint.tls);
+        assert_eq!(endpoint.authority, "10.95.194.233:8000");
+        assert_eq!(endpoint.socket, "10.95.194.233:8000".parse().unwrap());
+
+        let plaintext = parse_remote_endpoint("http://10.95.194.233:8000").unwrap();
+        assert!(!plaintext.tls);
     }
 
     #[test]

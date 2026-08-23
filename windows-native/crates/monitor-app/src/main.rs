@@ -46,6 +46,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     apply_environment_overrides(&mut settings);
+    migrate_remote_nodes_to_https(&mut settings, &paths)?;
     let dashboard_url = dashboard_url(&settings.bind_address);
     let recording_root = settings.recording_root.clone();
     let repository = Repository::open(paths.database.clone())?;
@@ -97,10 +98,30 @@ fn main() -> Result<()> {
 fn dashboard_url(bind_address: &str) -> String {
     match bind_address.parse::<std::net::SocketAddr>() {
         Ok(address) if address.ip().is_unspecified() => {
-            format!("http://127.0.0.1:{}", address.port())
+            format!("https://127.0.0.1:{}", address.port())
         }
-        _ => format!("http://{bind_address}"),
+        _ => format!("https://{bind_address}"),
     }
+}
+
+fn migrate_remote_nodes_to_https(
+    settings: &mut monitor_storage::Settings,
+    paths: &AppPaths,
+) -> Result<()> {
+    let mut changed = false;
+    for node in &mut settings.remote_nodes {
+        if let Some(address) = node.address.strip_prefix("http://") {
+            node.address = format!("https://{}", address.trim());
+            changed = true;
+        } else if !node.address.contains("://") {
+            node.address = format!("https://{}", node.address.trim());
+            changed = true;
+        }
+    }
+    if changed {
+        save_settings_atomic(paths, settings)?;
+    }
+    Ok(())
 }
 
 fn apply_environment_overrides(settings: &mut monitor_storage::Settings) {
