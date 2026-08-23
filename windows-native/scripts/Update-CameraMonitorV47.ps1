@@ -1,5 +1,6 @@
 param(
     [string]$TargetBind = '10.95.194.233:8000',
+    [string]$PeerAddress = '10.95.194.185:8000',
     [switch]$DryRun
 )
 
@@ -13,7 +14,7 @@ $targetPort = [int]$targetParts[1]
 if ($targetPort -lt 1 -or $targetPort -gt 65535) {
     throw "Target port is invalid: $targetPort"
 }
-$sourceExe = Join-Path $PSScriptRoot 'CameraMonitor-V4.7.0.exe'
+$sourceExe = Join-Path $PSScriptRoot 'CameraMonitor-V4.7.1.exe'
 $sourceTls = Join-Path $PSScriptRoot 'tls'
 $installDirectory = Join-Path $env:LOCALAPPDATA 'Programs\CameraMonitor'
 $installedExe = Join-Path $installDirectory 'CameraMonitor.exe'
@@ -21,7 +22,7 @@ $settingsPath = Join-Path $env:LOCALAPPDATA 'CameraMonitor\settings.json'
 $targetTls = Join-Path $env:LOCALAPPDATA 'CameraMonitor\tls'
 
 if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) {
-    throw "CameraMonitor-V4.7.0.exe was not found beside this updater: $sourceExe"
+    throw "CameraMonitor-V4.7.1.exe was not found beside this updater: $sourceExe"
 }
 foreach ($name in @('ca.crt', 'ca.cer', 'server.crt', 'server.key')) {
     if (-not (Test-Path -LiteralPath (Join-Path $sourceTls $name) -PathType Leaf)) {
@@ -29,8 +30,9 @@ foreach ($name in @('ca.crt', 'ca.cer', 'server.crt', 'server.key')) {
     }
 }
 
-Write-Host 'Camera Monitor V4.7.0 ZeroTier HTTPS updater'
+Write-Host 'Camera Monitor V4.7.1 ZeroTier HTTPS updater'
 Write-Host "Target HTTPS bind address: $TargetBind"
+Write-Host "Peer monitor address: https://$PeerAddress"
 if ($DryRun) {
     Write-Host 'Dry run passed. No process, certificate, firewall rule, or setting was changed.'
     exit 0
@@ -45,7 +47,8 @@ if (-not $isAdministrator) {
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-File', ('"' + $PSCommandPath + '"'),
-        '-TargetBind', ('"' + $TargetBind + '"')
+        '-TargetBind', ('"' + $TargetBind + '"'),
+        '-PeerAddress', ('"' + $PeerAddress + '"')
     )
     $elevated = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Verb RunAs -Wait -PassThru
     exit $elevated.ExitCode
@@ -91,20 +94,32 @@ New-NetFirewallRule -DisplayName 'Camera Monitor HTTPS TCP 8000' `
     -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000 -Profile Any | Out-Null
 
 $started = Start-Process -FilePath $installedExe -WorkingDirectory $installDirectory -WindowStyle Hidden -PassThru
-Write-Host "Started Camera Monitor V4.7.0, PID $($started.Id)."
+Write-Host "Started Camera Monitor V4.7.1, PID $($started.Id)."
 
 $health = $null
 for ($attempt = 0; $attempt -lt 30; $attempt++) {
     try {
         $health = Invoke-RestMethod "https://$TargetBind/api/health" -TimeoutSec 2
-        if ($health.protocol -eq 'https' -and $health.version -eq '4.7.0') { break }
+        if ($health.protocol -eq 'https' -and $health.version -eq '4.7.1') { break }
     } catch {
         Start-Sleep -Milliseconds 500
     }
 }
-if ($null -eq $health -or $health.protocol -ne 'https' -or $health.version -ne '4.7.0') {
-    throw "V4.7.0 started, but HTTPS health verification failed at https://$TargetBind/api/health."
+if ($null -eq $health -or $health.protocol -ne 'https' -or $health.version -ne '4.7.1') {
+    throw "V4.7.1 started, but HTTPS health verification failed at https://$TargetBind/api/health."
 }
 
+$peerPayload = @{
+    name = "Peer $PeerAddress"
+    address = "https://$PeerAddress"
+} | ConvertTo-Json
+Invoke-RestMethod `
+    -Uri "https://$TargetBind/api/remote_nodes" `
+    -Method Post `
+    -ContentType 'application/json; charset=utf-8' `
+    -Body ([System.Text.Encoding]::UTF8.GetBytes($peerPayload)) `
+    -TimeoutSec 5 | Out-Null
+
 Write-Host "Detected computer: $($health.computer_name)"
+Write-Host "Configured peer monitor: https://$PeerAddress"
 Write-Host "HTTPS verification passed: https://$TargetBind"

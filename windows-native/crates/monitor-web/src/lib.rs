@@ -232,7 +232,9 @@ struct CameraOption {
 async fn local_cameras(State(state): State<WebState>) -> Response {
     let controller = state.media.clone();
     match tokio::task::spawn_blocking(move || controller.list_cameras()).await {
-        Ok(Ok(devices)) => Json(json!({"cameras": devices})).into_response(),
+        Ok(Ok(devices)) => {
+            Json(json!({"cameras": prefer_physical_cameras(devices)})).into_response()
+        }
         Ok(Err(error)) => internal_error(error),
         Err(error) => internal_error(error),
     }
@@ -241,7 +243,7 @@ async fn local_cameras(State(state): State<WebState>) -> Response {
 async fn cameras(State(state): State<WebState>) -> Response {
     let controller = state.media.clone();
     let local_devices = match tokio::task::spawn_blocking(move || controller.list_cameras()).await {
-        Ok(Ok(devices)) => devices,
+        Ok(Ok(devices)) => prefer_physical_cameras(devices),
         Ok(Err(error)) => return internal_error(error),
         Err(error) => return internal_error(error),
     };
@@ -1736,6 +1738,25 @@ mod tests {
 
         let plaintext = parse_remote_endpoint("http://10.95.194.233:8000").unwrap();
         assert!(!plaintext.tls);
+    }
+
+    #[test]
+    fn physical_camera_hides_windows_virtual_camera_group() {
+        let devices = vec![
+            monitor_media::CameraDevice {
+                id: r"\\?\SWD#SGDEVAPI#VIRTUAL#{camera}".into(),
+                name: "YourCameraGroup".into(),
+                has_microphone: false,
+            },
+            monitor_media::CameraDevice {
+                id: r"\\?\USB#VID_09DA&PID_2703#{camera}".into(),
+                name: "A4tech FHD 1080P RGB PC Camera".into(),
+                has_microphone: true,
+            },
+        ];
+        let filtered = prefer_physical_cameras(devices);
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].id.contains("USB#VID_09DA"));
     }
 
     #[test]
