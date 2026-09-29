@@ -29,6 +29,12 @@ updates, downgrade versions, or clear a user's Task Manager startup-disable flag
 
 ## Publishing
 
+Continue development on `main`; do not create a permanent branch per version.
+Commit and push the reviewed changes to `main`, then tag that exact commit
+as `vX.Y.Z` and publish its GitHub Release. Existing release tags and assets
+remain unchanged. `archive/*` tags retain old branch snapshots and are not
+used as online update releases.
+
 1. Set the workspace version in `Cargo.toml` and update `Cargo.lock`.
 2. Run `cargo test --workspace --locked` and `scripts/Test-ClientUpdate.ps1`.
 3. Run `scripts/Build-Release.ps1`.

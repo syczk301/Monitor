@@ -10,6 +10,17 @@ Camera Monitor is a native Windows monitoring and continuous-recording applicati
 - `data/monitor.db` — retained only for one-time migration of historical data.
 - `Caddyfile` — authenticated reverse proxy from port 8080 to the native service on port 8000.
 
+## Version control
+
+Development continues on `main`. Formal releases use immutable `vX.Y.Z` tags
+and GitHub Releases, such as `v4.8.0` and `v4.8.1`; a permanent branch is not
+created for each version. Short-lived feature branches can be merged into
+`main` and deleted after their changes are retained there.
+
+Earlier version branch snapshots are retained by existing version tags or
+`archive/<old-branch-name>` tags. Archive tags preserve historical code and
+do not represent new published releases.
+
 ## Build and test
 
 ```powershell
