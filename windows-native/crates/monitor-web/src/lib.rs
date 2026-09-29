@@ -195,7 +195,7 @@ async fn tray_icon() -> impl IntoResponse {
 async fn health(State(state): State<WebState>) -> Json<Value> {
     let runtime = state.runtime.read().expect("runtime poisoned").clone();
     Json(json!({
-        "status": if runtime.last_error.is_empty() { "ok" } else { "degraded" },
+        "status": if runtime.last_error.is_empty() && runtime.recording_validation_error.is_empty() { "ok" } else { "degraded" },
         "runtime": "rust-native",
         "protocol": "https",
         "version": env!("CARGO_PKG_VERSION"),
@@ -216,6 +216,7 @@ async fn health(State(state): State<WebState>) -> Json<Value> {
         "preview_error": runtime.preview_error,
         "recording_bitrate": runtime.recording_bitrate,
         "last_error": runtime.last_error,
+        "recording_validation_error": runtime.recording_validation_error,
     }))
 }
 
@@ -960,6 +961,7 @@ async fn capture_info(State(state): State<WebState>) -> Json<Value> {
         "schedule_in_window": in_window,
         "auto_stop_remaining_ms": 0,
         "local_recording_status": runtime.recording_status,
+        "recording_validation_error": runtime.recording_validation_error,
         "local_recording_output_dir": settings.recording_root,
         "local_recording_retention_days": settings.retention_days,
         "local_recording_segment_minutes": 60,

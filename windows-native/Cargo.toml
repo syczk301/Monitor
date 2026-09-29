@@ -46,6 +46,7 @@ windows = { version = "0.62", features = [
   "Graphics_Imaging",
   "Media_Capture",
   "Media_Capture_Frames",
+  "Media_Editing",
   "Media_MediaProperties",
   "Storage",
   "Storage_Streams",

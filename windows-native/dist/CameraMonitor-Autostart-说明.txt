@@ -1,0 +1,13 @@
+﻿Camera Monitor 4.7.1 自启动安装版
+
+双击 CameraMonitor-4.7.1-Autostart-x64.msi 完成安装。
+安装后可从开始菜单启动 Camera Monitor；以后登录当前 Windows 用户时自动启动。
+建议先从托盘退出正在运行的旧客户端，再安装。
+安装包包含已验证的绿屏修复版，自动创建当前用户的 CameraMonitor 登录启动项。
+可在 Windows 任务管理器的“启动应用”中禁用自启动。
+
+这是现有客户端的升级包，沿用 %LOCALAPPDATA%\CameraMonitor 下的摄像头、录像计划和 HTTPS 证书配置。
+未配置过的新电脑仍需单独设置 HTTPS 证书和录像目录；包内不分发本机私钥。
+
+验证：WiX MSI 完整性校验通过；包内 Registry 和 FeatureComponents 表确认自启动组件默认安装。
+未执行本机安装或重启登录测试，当前运行中的客户端不受此次打包影响。

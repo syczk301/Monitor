@@ -15,17 +15,21 @@ use std::{
     time::{Duration, Instant},
 };
 use windows::{
-    Foundation::{PropertyType, PropertyValue},
-    Graphics::Imaging::{BitmapEncoder, BitmapPropertySet, BitmapSize, BitmapTypedValue},
+    Foundation::{PropertyType, PropertyValue, TimeSpan},
+    Graphics::Imaging::{
+        BitmapAlphaMode, BitmapDecoder, BitmapEncoder, BitmapPixelFormat, BitmapPropertySet,
+        BitmapSize, BitmapTransform, BitmapTypedValue, ColorManagementMode, ExifOrientationMode,
+    },
     Media::{
         Capture::Frames::{
             MediaFrameReader, MediaFrameReaderAcquisitionMode, MediaFrameReaderStartStatus,
             MediaFrameSourceGroup, MediaFrameSourceKind,
         },
         Capture::{
-            MediaCapture, MediaCaptureInitializationSettings, MediaCaptureMemoryPreference,
-            MediaCaptureSharingMode, StreamingCaptureMode,
+            MediaCapture, MediaCaptureFailedEventHandler, MediaCaptureInitializationSettings,
+            MediaCaptureMemoryPreference, MediaCaptureSharingMode, StreamingCaptureMode,
         },
+        Editing::{MediaClip, MediaComposition, VideoFramePrecision},
         MediaProperties::{MediaEncodingProfile, VideoEncodingQuality},
     },
     Storage::{
@@ -79,6 +83,7 @@ pub struct RuntimeStatus {
     pub preview_status: String,
     pub preview_error: String,
     pub last_error: String,
+    pub recording_validation_error: String,
 }
 
 impl RuntimeStatus {
@@ -104,6 +109,7 @@ impl RuntimeStatus {
             preview_status: "idle".into(),
             preview_error: String::new(),
             last_error: String::new(),
+            recording_validation_error: String::new(),
         }
     }
 }
@@ -290,7 +296,7 @@ fn recorder_thread(
                 finish_recording(&mut recording, &mut active_paths, &status);
                 segment_hour = None;
                 stop_preview_reader(&mut frame_reader);
-                capture = None;
+                close_capture(&mut capture);
                 settings.width = width;
                 settings.height = height;
                 settings.fps = fps;
@@ -316,7 +322,7 @@ fn recorder_thread(
                     finish_recording(&mut recording, &mut active_paths, &status);
                     segment_hour = None;
                     stop_preview_reader(&mut frame_reader);
-                    capture = None;
+                    close_capture(&mut capture);
                     selected_camera_id = Some(device.id.clone());
                     settings.camera_id = device.id.clone();
                     retry_at = Instant::now();
@@ -334,6 +340,20 @@ fn recorder_thread(
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
         }
 
+        // Failed is asynchronous: finalize on this worker, never on the driver callback.
+        if capture.is_some()
+            && status
+                .read()
+                .map(|s| s.capture_status == "error")
+                .unwrap_or(false)
+        {
+            finish_recording(&mut recording, &mut active_paths, &status);
+            stop_preview_reader(&mut frame_reader);
+            close_capture(&mut capture);
+            segment_hour = None;
+            retry_at = Instant::now() + Duration::from_secs(2);
+        }
+
         let now = Local::now();
         let schedule_in_window = settings.recording_schedule.contains(
             now.weekday().number_from_monday() as u8,
@@ -349,6 +369,8 @@ fn recorder_thread(
 
         if (!should_record || rotate) && recording.is_some() {
             finish_recording(&mut recording, &mut active_paths, &status);
+            stop_preview_reader(&mut frame_reader);
+            close_capture(&mut capture);
             segment_hour = None;
         }
         if !should_record {
@@ -406,6 +428,9 @@ fn recorder_thread(
             continue;
         }
 
+        // A new encoder must not inherit a long-lived or preview-only capture session.
+        stop_preview_reader(&mut frame_reader);
+        close_capture(&mut capture);
         if capture.is_none() {
             if let Err(error) = ensure_capture(&mut capture, selected_camera_id.as_deref(), &status)
             {
@@ -452,12 +477,14 @@ fn recorder_thread(
             Err(error) => {
                 set_error(&status, format!("native recorder start failed: {error:#}"));
                 retry_at = Instant::now() + Duration::from_secs(2);
-                capture = None;
+                stop_preview_reader(&mut frame_reader);
+                close_capture(&mut capture);
             }
         }
     }
     finish_recording(&mut recording, &mut active_paths, &status);
     stop_preview_reader(&mut frame_reader);
+    close_capture(&mut capture);
     unsafe { CoUninitialize() };
 }
 
@@ -932,6 +959,21 @@ fn ensure_capture(
     native
         .InitializeWithSettingsAsync(&initialization)?
         .join()?;
+    let failure_status = status.clone();
+    native.Failed(&MediaCaptureFailedEventHandler::new(move |_, args| {
+        let message = args
+            .as_ref()
+            .map(|args| {
+                format!(
+                    "camera capture failed (0x{:08X}): {}",
+                    args.Code().unwrap_or_default(),
+                    args.Message().unwrap_or_default()
+                )
+            })
+            .unwrap_or_else(|| "camera capture failed".into());
+        set_error(&failure_status, message);
+        Ok(())
+    }))?;
     *capture = Some(native);
     Ok(())
 }
@@ -1005,6 +1047,15 @@ fn stop_preview_reader(reader: &mut Option<PreviewReader>) {
                 .and_then(|operation| operation.join());
         }
         let _ = active.reader.Close();
+        let _ = active._capture.Close();
+    }
+}
+
+fn close_capture(capture: &mut Option<MediaCapture>) {
+    if let Some(active) = capture.take() {
+        if let Err(error) = active.Close() {
+            tracing::warn!(%error, "closing camera capture failed");
+        }
     }
 }
 
@@ -1145,6 +1196,8 @@ fn finish_recording(
         if partial.exists() {
             if let Err(error) = fs::rename(&partial, &final_path) {
                 set_error(status, format!("renaming recording failed: {error}"));
+            } else {
+                check_finished_recording(final_path, status.clone());
             }
         }
     }
@@ -1155,6 +1208,99 @@ fn finish_recording(
             s.recording_status = "waiting".into();
         }
     });
+}
+
+// Decode the encoded file, not the independent preview stream. A successful
+// StartAsync/StopAsync does not guarantee that the encoder received real pixels.
+fn check_finished_recording(path: PathBuf, status: Arc<RwLock<RuntimeStatus>>) {
+    let spawn = thread::Builder::new()
+        .name("recording-validation".into())
+        .spawn(move || {
+            if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
+                .ok()
+                .is_err()
+            {
+                update(&status, |s| {
+                    s.recording_validation_error =
+                        "recording validation COM initialization failed".into()
+                });
+                return;
+            }
+            let result = validate_recording(&path);
+            match result {
+                Ok(()) => {
+                    tracing::info!(path = %path.display(), "recording decoded successfully");
+                    update(&status, |s| s.recording_validation_error.clear());
+                }
+                Err(error) => {
+                    let message = format!(
+                        "recording validation failed for {}: {error:#}",
+                        path.display()
+                    );
+                    tracing::error!("{message}");
+                    update(&status, |s| s.recording_validation_error = message);
+                }
+            }
+            unsafe { CoUninitialize() };
+        });
+    if let Err(error) = spawn {
+        tracing::error!(%error, "could not start recording validation");
+    }
+}
+
+/// Caller must initialize COM. Samples two decoded frames from a finalized MP4.
+pub fn validate_recording(path: &Path) -> Result<()> {
+    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path.to_string_lossy().as_ref()))?
+        .join()?;
+    let clip = MediaClip::CreateFromFileAsync(&file)?.join()?;
+    let duration = clip.OriginalDuration()?.Duration;
+    anyhow::ensure!(duration > 0, "recording has no duration");
+    let composition = MediaComposition::new()?;
+    composition.Clips()?.Append(&clip)?;
+    let mut green_frames = 0;
+    for position in [duration / 4, duration / 4 * 3] {
+        let thumbnail = composition
+            .GetThumbnailAsync(
+                TimeSpan { Duration: position },
+                160,
+                90,
+                VideoFramePrecision::NearestFrame,
+            )?
+            .join()?;
+        let decoder = BitmapDecoder::CreateAsync(&thumbnail)?.join()?;
+        let pixels = decoder
+            .GetPixelDataTransformedAsync(
+                BitmapPixelFormat::Bgra8,
+                BitmapAlphaMode::Ignore,
+                &BitmapTransform::new()?,
+                ExifOrientationMode::IgnoreExifOrientation,
+                ColorManagementMode::DoNotColorManage,
+            )?
+            .join()?
+            .DetachPixelData()?;
+        anyhow::ensure!(!pixels.is_empty(), "recording decoded to an empty frame");
+        if is_empty_green_frame(&pixels) {
+            green_frames += 1;
+        }
+    }
+    anyhow::ensure!(
+        green_frames < 2,
+        "encoded video contains empty green frames"
+    );
+    Ok(())
+}
+
+fn is_empty_green_frame(bgra: &[u8]) -> bool {
+    // Zero-filled YUV decodes near RGB(0, 135, 0). Do not classify dark scenes
+    // or ordinary green objects as encoder failures.
+    let count = bgra.len() / 4;
+    count > 0
+        && bgra
+            .chunks_exact(4)
+            .filter(|p| p[0] <= 4 && (131..=139).contains(&p[1]) && p[2] <= 4)
+            .count()
+            * 1000
+            >= count * 999
 }
 
 fn next_segment_paths(root: &Path) -> Result<(PathBuf, PathBuf)> {
@@ -1234,6 +1380,17 @@ fn set_error(status: &Arc<RwLock<RuntimeStatus>>, message: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn green_frame_detection_preserves_dark_and_real_scenes() {
+        assert!(is_empty_green_frame(&[0, 135, 0, 255].repeat(100)));
+        assert!(!is_empty_green_frame(&[]));
+        assert!(!is_empty_green_frame(&[0, 0, 0, 255].repeat(100)));
+        assert!(!is_empty_green_frame(&[0, 255, 0, 255].repeat(100)));
+        let mut scene = [0, 135, 0, 255].repeat(100);
+        scene[0] = 100;
+        assert!(!is_empty_green_frame(&scene));
+    }
 
     #[test]
     fn runtime_starts_with_ai_disabled() {
