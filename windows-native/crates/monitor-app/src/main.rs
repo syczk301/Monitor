@@ -10,7 +10,7 @@ use monitor_storage::{
     AppPaths, RecordingMode, Repository, load_or_create_settings, migrate_legacy,
     save_settings_atomic,
 };
-use monitor_web::{AudioHub, PreviewHub, WebState};
+use monitor_web::{AudioHub, PreviewHub, RemotePreviewHub, WebState};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -77,6 +77,7 @@ fn main() -> Result<()> {
         runtime: runtime_status.clone(),
         media: controller.clone(),
         preview,
+        remote_preview: RemotePreviewHub::default(),
         audio,
     };
     let web_thread = std::thread::Builder::new()

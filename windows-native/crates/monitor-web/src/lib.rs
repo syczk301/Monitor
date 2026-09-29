@@ -18,6 +18,7 @@ use monitor_storage::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     convert::Infallible,
     env,
     fs::File,
@@ -25,7 +26,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, Weak},
     time::Duration,
 };
 use tokio::{
@@ -36,7 +37,14 @@ use tokio::{
 };
 use tokio_rustls::TlsConnector;
 use tower::ServiceExt;
-use tower_http::{compression::CompressionLayer, services::ServeFile, trace::TraceLayer};
+use tower_http::{
+    compression::{
+        CompressionLayer,
+        predicate::{DefaultPredicate, NotForContentType, Predicate},
+    },
+    services::ServeFile,
+    trace::TraceLayer,
+};
 
 const INDEX_HTML: &str = include_str!("../../../assets/web/index.html");
 const HISTORY_HTML: &str = include_str!("../../../assets/web/history.html");
@@ -46,6 +54,122 @@ const TRAY_ICON: &[u8] = include_bytes!("../../../assets/tray_icon.png");
 #[derive(Clone)]
 pub struct PreviewHub {
     sender: watch::Sender<Arc<Vec<u8>>>,
+}
+
+#[derive(Clone, Default)]
+pub struct RemotePreviewHub {
+    relays: Arc<tokio::sync::Mutex<HashMap<String, Weak<RemotePreviewRelay>>>>,
+}
+
+struct RemotePreviewRelay {
+    receiver: watch::Receiver<Arc<Vec<u8>>>,
+    task: tokio::task::JoinHandle<()>,
+    metrics: Arc<RwLock<(f64, f64)>>,
+}
+
+impl Drop for RemotePreviewRelay {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl RemotePreviewHub {
+    async fn subscribe(&self, node: &RemoteNode) -> Result<Arc<RemotePreviewRelay>> {
+        let mut relays = self.relays.lock().await;
+        relays.retain(|_, relay| relay.strong_count() > 0);
+        if let Some(relay) = relays.get(&node.address).and_then(Weak::upgrade) {
+            if !relay.task.is_finished() {
+                return Ok(relay);
+            }
+        }
+        let (socket, pending, status, content_type) =
+            open_remote_response(node, "GET", "/stream", None).await?;
+        anyhow::ensure!(
+            status == 200 && content_type.starts_with("multipart/x-mixed-replace"),
+            "remote preview unavailable: HTTP {status}"
+        );
+        let relay = start_remote_relay(socket, pending);
+        relays.insert(node.address.clone(), Arc::downgrade(&relay));
+        Ok(relay)
+    }
+
+    async fn metrics(&self, address: &str) -> Option<(f64, f64)> {
+        let relays = self.relays.lock().await;
+        let relay = relays.get(address)?.upgrade()?;
+        let metrics = *relay.metrics.read().ok()?;
+        Some(metrics)
+    }
+}
+
+fn start_remote_relay(mut socket: RemoteStream, mut pending: Vec<u8>) -> Arc<RemotePreviewRelay> {
+    let (sender, receiver) = watch::channel(Arc::new(Vec::new()));
+    let metrics = Arc::new(RwLock::new((0.0, 0.0)));
+    let worker_metrics = metrics.clone();
+    let task = tokio::spawn(async move {
+        let result = async {
+            let mut buffer = [0u8; 64 * 1024];
+            let mut sampled = 0u32;
+            let mut started = std::time::Instant::now();
+            loop {
+                while let Some(jpeg) = take_mjpeg_frame(&mut pending)? {
+                    sampled += 1;
+                    let elapsed = started.elapsed().as_secs_f64();
+                    if elapsed >= 1.0 {
+                        let fps = sampled as f64 / elapsed;
+                        if let Ok(mut metrics) = worker_metrics.write() {
+                            *metrics = (fps, 1000.0 / fps);
+                        }
+                        sampled = 0;
+                        started = std::time::Instant::now();
+                    }
+                    sender.send_replace(Arc::new(jpeg));
+                }
+                let read = timeout(Duration::from_secs(10), socket.read(&mut buffer)).await??;
+                if read == 0 {
+                    break;
+                }
+                pending.extend_from_slice(&buffer[..read]);
+            }
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(%error, "remote preview relay ended");
+        }
+    });
+    Arc::new(RemotePreviewRelay {
+        receiver,
+        task,
+        metrics,
+    })
+}
+
+fn take_mjpeg_frame(pending: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
+    let Some(end) = pending.windows(4).position(|w| w == b"\r\n\r\n") else {
+        anyhow::ensure!(pending.len() <= 8192, "remote JPEG header is too large");
+        return Ok(None);
+    };
+    anyhow::ensure!(end <= 8192, "remote JPEG header is too large");
+    let header = std::str::from_utf8(&pending[..end])?;
+    let length = header
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>())
+        })
+        .context("remote JPEG length is missing")??;
+    anyhow::ensure!(
+        (1..=4 * 1024 * 1024).contains(&length),
+        "remote JPEG size is invalid"
+    );
+    let start = end + 4;
+    if pending.len() < start + length {
+        return Ok(None);
+    }
+    let jpeg = pending[start..start + length].to_vec();
+    pending.drain(..start + length);
+    Ok(Some(jpeg))
 }
 
 #[derive(Clone)]
@@ -101,6 +225,7 @@ pub struct WebState {
     pub runtime: Arc<RwLock<RuntimeStatus>>,
     pub media: MediaController,
     pub preview: PreviewHub,
+    pub remote_preview: RemotePreviewHub,
     pub audio: AudioHub,
 }
 
@@ -183,7 +308,9 @@ pub fn router(state: WebState) -> Router {
         )
         .route("/api/reports/daily", get(daily_report))
         .route("/api/reports/weekly", get(weekly_report))
-        .layer(CompressionLayer::new())
+        .layer(CompressionLayer::new().compress_when(
+            DefaultPredicate::new().and(NotForContentType::new("multipart/x-mixed-replace")),
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -214,6 +341,10 @@ async fn health(State(state): State<WebState>) -> Json<Value> {
         "preview_clients": runtime.preview_clients,
         "preview_status": runtime.preview_status,
         "preview_error": runtime.preview_error,
+        "preview_fps": runtime.preview_fps,
+        "preview_frame_ms": runtime.preview_frame_ms,
+        "preview_encode_ms": runtime.preview_encode_ms,
+        "preview_frame_bytes": runtime.preview_frame_bytes,
         "recording_bitrate": runtime.recording_bitrate,
         "last_error": runtime.last_error,
         "recording_validation_error": runtime.recording_validation_error,
@@ -536,42 +667,12 @@ async fn remote_stream(
     let Some(node) = node else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let (mut socket, initial, status, content_type) =
-        match open_remote_response(&node, "GET", "/stream", None).await {
-            Ok(response) => response,
-            Err(error) => return (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
-        };
-    if status != 200 {
-        return (
-            StatusCode::BAD_GATEWAY,
-            format!("remote stream returned {status}"),
-        )
-            .into_response();
-    }
-    let body = Body::from_stream(stream! {
-        if !initial.is_empty() {
-            yield Ok::<Bytes, std::io::Error>(Bytes::from(initial));
-        }
-        let mut buffer = vec![0u8; 64 * 1024];
-        loop {
-            match socket.read(&mut buffer).await {
-                Ok(0) => break,
-                Ok(read) => yield Ok::<Bytes, std::io::Error>(Bytes::copy_from_slice(&buffer[..read])),
-                Err(_) => break,
-            }
-        }
-    });
-    let mut response = Response::new(body);
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(&content_type).unwrap_or_else(|_| {
-            HeaderValue::from_static("multipart/x-mixed-replace; boundary=frame")
-        }),
-    );
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+    let relay = match state.remote_preview.subscribe(&node).await {
+        Ok(relay) => relay,
+        Err(error) => return (StatusCode::BAD_GATEWAY, error.to_string()).into_response(),
+    };
+    let receiver = relay.receiver.clone();
+    jpeg_response(receiver, Some(relay), None)
 }
 
 async fn remote_audio(
@@ -871,7 +972,10 @@ fn private_ca_path() -> Result<PathBuf> {
 async fn stats(State(state): State<WebState>) -> Json<Value> {
     let runtime = state.runtime.read().expect("runtime poisoned").clone();
     Json(json!({
-        "fps": runtime.fps,
+        "fps": runtime.preview_fps,
+        "preview_frame_ms": runtime.preview_frame_ms,
+        "preview_encode_ms": runtime.preview_encode_ms,
+        "preview_frame_bytes": runtime.preview_frame_bytes,
         "avg_latency_ms": 0.0,
         "tracked_targets": 0,
         "gpu_utilization": 0.0,
@@ -895,7 +999,13 @@ async fn selected_stats(State(state): State<WebState>) -> Response {
     };
     match open_remote_response(&node, "GET", "/stats", None).await {
         Ok((_, body, 200, _)) => match serde_json::from_slice::<Value>(&body) {
-            Ok(value) => Json(value).into_response(),
+            Ok(mut value) => {
+                if let Some((fps, frame_ms)) = state.remote_preview.metrics(&node.address).await {
+                    value["fps"] = json!(fps);
+                    value["preview_frame_ms"] = json!(frame_ms);
+                }
+                Json(value).into_response()
+            }
             Err(error) => (
                 StatusCode::BAD_GATEWAY,
                 Json(json!({"detail": format!("远程统计信息解析失败：{error}")})),
@@ -942,7 +1052,10 @@ async fn capture_info(State(state): State<WebState>) -> Json<Value> {
         "requested_bitrate": settings.bitrate,
         "actual_width": runtime.width,
         "actual_height": runtime.height,
-        "mjpeg_quality": 75,
+        "mjpeg_quality": (monitor_media::PREVIEW_JPEG_QUALITY * 100.0).round() as u32,
+        "preview_fps": runtime.preview_fps,
+        "preview_encode_ms": runtime.preview_encode_ms,
+        "preview_frame_bytes": runtime.preview_frame_bytes,
         "target_fps": settings.fps,
         "capture_status": runtime.capture_status,
         "capture_backend": runtime.capture_backend,
@@ -1646,14 +1759,22 @@ async fn audio_pcm(State(state): State<WebState>) -> Response {
 }
 
 async fn mjpeg_stream(State(state): State<WebState>) -> Response {
-    let mut receiver = state.preview.subscribe();
+    let receiver = state.preview.subscribe();
     increment_clients(&state.runtime, 1);
-    let runtime = state.runtime.clone();
+    jpeg_response(receiver, None, Some(PreviewGuard(state.runtime.clone())))
+}
+
+fn jpeg_response(
+    mut receiver: watch::Receiver<Arc<Vec<u8>>>,
+    relay: Option<Arc<RemotePreviewRelay>>,
+    guard: Option<PreviewGuard>,
+) -> Response {
     let body = Body::from_stream(stream! {
-        let _guard = PreviewGuard(runtime);
+        let _guard = guard;
+        let _relay = relay;
         loop {
             if receiver.changed().await.is_err() { break; }
-            let jpeg = receiver.borrow().clone();
+            let jpeg = receiver.borrow_and_update().clone();
             if jpeg.is_empty() { continue; }
             let mut chunk = Vec::with_capacity(jpeg.len() + 96);
             chunk.extend_from_slice(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ");
@@ -1716,6 +1837,77 @@ fn internal_error(error: impl std::fmt::Display) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_jpeg_parser_waits_for_complete_content_length() {
+        let jpeg = [0xff, 0xd8, 0xff, 0xd9, 42, 0xff, 0xd9];
+        let mut data = b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 7\r\n\r\n".to_vec();
+        data.extend_from_slice(&jpeg[..4]);
+        let original = data.clone();
+        assert!(take_mjpeg_frame(&mut data).unwrap().is_none());
+        assert_eq!(data, original);
+        data.extend_from_slice(&jpeg[4..]);
+        data.extend_from_slice(b"\r\n--frame\r\nContent-Length: 1\r\n\r\nx");
+        assert_eq!(take_mjpeg_frame(&mut data).unwrap().unwrap(), jpeg);
+        assert_eq!(take_mjpeg_frame(&mut data).unwrap().unwrap(), b"x");
+        assert!(data.is_empty());
+        for size in ["0", "9999999999", "invalid"] {
+            let mut invalid = format!("--frame\r\nContent-Length: {size}\r\n\r\n").into_bytes();
+            assert!(take_mjpeg_frame(&mut invalid).is_err());
+        }
+        assert!(take_mjpeg_frame(&mut vec![b'x'; 8193]).is_err());
+    }
+
+    #[tokio::test]
+    async fn remote_relay_shares_connection_and_drops_stale_frames() {
+        let (socket, mut upstream) = tokio::io::duplex(4096);
+        let relay = start_remote_relay(Box::pin(socket), Vec::new());
+        let node = RemoteNode {
+            name: "test".into(),
+            address: "https://127.0.0.1:1".into(),
+        };
+        let hub = RemotePreviewHub::default();
+        hub.relays
+            .lock()
+            .await
+            .insert(node.address.clone(), Arc::downgrade(&relay));
+        let first = hub.subscribe(&node).await.unwrap();
+        let second = hub.subscribe(&node).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &second)); // Does not connect to the deliberately invalid endpoint.
+        let mut slow = first.receiver.clone();
+        upstream
+            .write_all(b"--frame\r\nContent-Length: 1\r\n\r\n1")
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(1), slow.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        slow.borrow_and_update();
+        upstream.write_all(b"\r\n--frame\r\nContent-Length: 1\r\n\r\n2\r\n--frame\r\nContent-Length: 1\r\n\r\n3").await.unwrap();
+        timeout(Duration::from_secs(1), async {
+            loop {
+                slow.changed().await.unwrap();
+                if slow.borrow_and_update().as_slice() == b"3" {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(slow.borrow().as_slice(), b"3");
+        drop(first);
+        drop(second);
+        drop(relay);
+        let mut byte = [0];
+        assert_eq!(
+            timeout(Duration::from_secs(1), upstream.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+    }
 
     #[test]
     fn dashboard_is_embedded() {

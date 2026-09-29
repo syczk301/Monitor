@@ -45,10 +45,18 @@ use windows::{
             },
             KernelStreaming::WAVE_FORMAT_EXTENSIBLE,
             Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
+            TIMERR_NOERROR, timeBeginPeriod, timeEndPeriod,
         },
-        System::Com::{
-            CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
-            CoUninitialize,
+        System::{
+            Com::{
+                CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+                CoUninitialize,
+            },
+            Threading::{
+                GetCurrentProcess, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, PROCESS_POWER_THROTTLING_STATE,
+                ProcessPowerThrottling, SetProcessInformation,
+            },
         },
     },
     core::HSTRING,
@@ -82,6 +90,10 @@ pub struct RuntimeStatus {
     pub audio_clients: u32,
     pub preview_status: String,
     pub preview_error: String,
+    pub preview_fps: f64,
+    pub preview_frame_ms: f64,
+    pub preview_encode_ms: f64,
+    pub preview_frame_bytes: usize,
     pub last_error: String,
     pub recording_validation_error: String,
 }
@@ -108,6 +120,10 @@ impl RuntimeStatus {
             audio_clients: 0,
             preview_status: "idle".into(),
             preview_error: String::new(),
+            preview_fps: 0.0,
+            preview_frame_ms: 0.0,
+            preview_encode_ms: 0.0,
+            preview_frame_bytes: 0,
             last_error: String::new(),
             recording_validation_error: String::new(),
         }
@@ -130,6 +146,45 @@ struct PreviewReader {
     _capture: MediaCapture,
     reader: MediaFrameReader,
     started: bool,
+    sample_started: Instant,
+    sample_frames: u32,
+}
+
+#[derive(Default)]
+struct PreviewTimerResolution(bool);
+
+impl PreviewTimerResolution {
+    fn set_active(&mut self, active: bool) {
+        if active && !self.0 {
+            // A tray-only process is non-visible: Windows 11 can otherwise ignore
+            // timeBeginPeriod and round 30 FPS waits up to roughly 46 ms again.
+            let policy = PROCESS_POWER_THROTTLING_STATE {
+                Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                ControlMask: PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+                StateMask: 0,
+            };
+            if let Err(error) = unsafe {
+                SetProcessInformation(
+                    GetCurrentProcess(),
+                    ProcessPowerThrottling,
+                    (&policy as *const PROCESS_POWER_THROTTLING_STATE).cast(),
+                    std::mem::size_of_val(&policy) as u32,
+                )
+            } {
+                tracing::debug!(%error, "timer throttling control unavailable on this Windows version");
+            }
+            self.0 = unsafe { timeBeginPeriod(1) } == TIMERR_NOERROR;
+        } else if !active && self.0 {
+            unsafe { timeEndPeriod(1) };
+            self.0 = false;
+        }
+    }
+}
+
+impl Drop for PreviewTimerResolution {
+    fn drop(&mut self) {
+        self.set_active(false);
+    }
 }
 
 #[derive(Clone)]
@@ -274,10 +329,17 @@ fn recorder_thread(
     let mut retry_at = Instant::now();
     let mut frame_reader: Option<PreviewReader> = None;
     let mut last_preview = Instant::now();
+    let mut preview_timer = PreviewTimerResolution::default();
     let mut selected_camera_id =
         (!settings.camera_id.is_empty()).then(|| settings.camera_id.clone());
 
     loop {
+        preview_timer.set_active(
+            status
+                .read()
+                .map(|s| s.preview_clients > 0)
+                .unwrap_or(false),
+        );
         let command_timeout = preview_command_timeout(
             preview.is_some()
                 && status
@@ -689,7 +751,15 @@ fn publish_preview_if_needed(
 ) {
     let clients = status.read().map(|s| s.preview_clients).unwrap_or(0);
     if clients == 0 {
-        update(status, |s| s.preview_status = "idle".into());
+        if let Some(active) = reader.as_mut() {
+            active.sample_frames = 0;
+            active.sample_started = Instant::now();
+        }
+        update(status, |s| {
+            s.preview_status = "idle".into();
+            s.preview_fps = 0.0;
+            s.preview_frame_ms = 0.0;
+        });
         return;
     }
     let frame_interval = preview_frame_interval(fps);
@@ -750,22 +820,50 @@ fn publish_preview_if_needed(
             }
         }
     }
-    let result = (|| -> Result<Vec<u8>> {
-        let frame = reader
+    let encode_started = Instant::now();
+    let result = (|| -> Result<Option<Vec<u8>>> {
+        let frame = match reader
             .as_ref()
             .context("preview reader is unavailable")?
             .reader
-            .TryAcquireLatestFrame()?;
+            .TryAcquireLatestFrame()
+        {
+            Ok(frame) => frame,
+            Err(error) if error.code().is_ok() => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
         let bitmap = frame.VideoMediaFrame()?.SoftwareBitmap()?;
-        encode_jpeg(&bitmap)
+        let jpeg = encode_jpeg(&bitmap);
+        let _ = bitmap.Close();
+        let _ = frame.Close();
+        jpeg.map(Some)
     })();
     match result {
-        Ok(jpeg) => {
+        Ok(Some(jpeg)) => {
+            let active = reader.as_mut().expect("preview reader initialized");
+            active.sample_frames += 1;
+            let elapsed = active.sample_started.elapsed().as_secs_f64();
+            let measured_fps = (elapsed >= 1.0).then(|| active.sample_frames as f64 / elapsed);
+            if measured_fps.is_some() {
+                active.sample_frames = 0;
+                active.sample_started = Instant::now();
+            }
             update(status, |s| {
                 s.preview_status = "running".into();
                 s.preview_error.clear();
+                s.preview_encode_ms = encode_started.elapsed().as_secs_f64() * 1000.0;
+                s.preview_frame_bytes = jpeg.len();
+                if let Some(fps) = measured_fps {
+                    s.preview_fps = fps;
+                    s.preview_frame_ms = 1000.0 / fps;
+                }
             });
             publisher.expect("publisher checked")(jpeg);
+        }
+        Ok(None) => {
+            // No new camera frame yet: retry soon instead of skipping a full frame interval.
+            *last_preview =
+                Instant::now() - frame_interval.saturating_sub(Duration::from_millis(2));
         }
         Err(error) => {
             tracing::debug!(%error, "preview frame was unavailable");
@@ -797,6 +895,7 @@ fn preview_command_timeout(
 }
 
 const PREVIEW_MAX_EDGE: u32 = 1280;
+pub const PREVIEW_JPEG_QUALITY: f32 = 0.60;
 
 fn preview_dimensions(width: u32, height: u32) -> (u32, u32) {
     let longest_edge = width.max(height);
@@ -852,14 +951,18 @@ fn create_shared_preview_reader(
         _capture: capture,
         reader,
         started: false,
+        sample_started: Instant::now(),
+        sample_frames: 0,
     })
 }
 
 fn encode_jpeg(bitmap: &windows::Graphics::Imaging::SoftwareBitmap) -> Result<Vec<u8>> {
     let stream = InMemoryRandomAccessStream::new()?;
     let options = BitmapPropertySet::new()?;
-    let quality =
-        BitmapTypedValue::Create(&PropertyValue::CreateSingle(0.75)?, PropertyType::Single)?;
+    let quality = BitmapTypedValue::Create(
+        &PropertyValue::CreateSingle(PREVIEW_JPEG_QUALITY)?,
+        PropertyType::Single,
+    )?;
     options.Insert(&HSTRING::from("ImageQuality"), &quality)?;
     let encoder = BitmapEncoder::CreateWithEncodingOptionsAsync(
         BitmapEncoder::JpegEncoderId()?,
