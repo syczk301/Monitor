@@ -31,3 +31,4 @@ windows-native/dist/*.exe
 windows-native/dist/**/*.exe
 windows-native/dist/tls/
 windows-native/dist/package-v4.7*/
+windows-native/dist/release-v*/

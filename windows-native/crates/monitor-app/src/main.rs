@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod native_ui;
+mod updater;
 
 use anyhow::Result;
 use monitor_media::MediaService;
@@ -18,6 +19,10 @@ use tokio::sync::watch;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() -> Result<()> {
+    if env::args().any(|argument| argument == "--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let paths = AppPaths::discover()?;
     paths.ensure()?;
     let file_appender = tracing_appender::rolling::daily(&paths.logs, "monitor-native.log");

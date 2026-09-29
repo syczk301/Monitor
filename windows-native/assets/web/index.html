@@ -514,7 +514,7 @@
     }
 
     function updateSoundButtons() {
-      const label = audioEnabled ? "关闭声音" : "开启声音";
+      const label = audioConnecting ? "正在开启…" : (audioEnabled ? "关闭声音" : "开启声音");
       if (soundToggle) {
         soundToggle.textContent = label;
         soundToggle.classList.toggle("active", audioEnabled);

@@ -39,6 +39,7 @@ const CMD_RECORDINGS: usize = 1003;
 const CMD_START: usize = 1004;
 const CMD_STOP: usize = 1005;
 const CMD_EXIT: usize = 1006;
+const CMD_UPDATE: usize = 1007;
 
 struct UiState {
     media: MediaController,
@@ -181,6 +182,7 @@ unsafe fn show_menu(hwnd: HWND) {
     unsafe {
         let _ = AppendMenuW(menu, MF_STRING, CMD_DASHBOARD, w!("打开监控面板"));
         let _ = AppendMenuW(menu, MF_STRING, CMD_STATUS, w!("运行状态"));
+        let _ = AppendMenuW(menu, MF_STRING, CMD_UPDATE, w!("检查更新…"));
         let _ = AppendMenuW(menu, MF_STRING, CMD_RECORDINGS, w!("打开录像目录"));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, CMD_START, w!("启动持续录像"));
@@ -215,6 +217,11 @@ fn handle_command(command: usize) {
     match command {
         CMD_DASHBOARD => open_dashboard(),
         CMD_STATUS => show_status(),
+        CMD_UPDATE => {
+            if let Err(error) = crate::updater::check_for_updates() {
+                message_box(&format!("检查更新失败：{error:#}"));
+            }
+        }
         CMD_RECORDINGS => {
             if let Some(state) = UI_STATE.get().and_then(|s| s.lock().ok()) {
                 shell_open(&state.recording_root.to_string_lossy());
@@ -262,7 +269,7 @@ fn shell_open(value: &str) {
     }
 }
 
-fn message_box(message: &str) {
+pub(crate) fn message_box(message: &str) {
     let message = wide(message);
     unsafe {
         let _ = MessageBoxW(
