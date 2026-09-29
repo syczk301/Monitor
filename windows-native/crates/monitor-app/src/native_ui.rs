@@ -41,6 +41,7 @@ const CMD_START: usize = 1004;
 const CMD_STOP: usize = 1005;
 const CMD_EXIT: usize = 1006;
 const CMD_UPDATE: usize = 1007;
+const CMD_REPAIR_STARTUP: usize = 1008;
 
 struct UiState {
     media: MediaController,
@@ -193,7 +194,8 @@ unsafe fn show_menu(hwnd: HWND) {
     };
     let heading = wide(&format!("智能监控  v{}", env!("CARGO_PKG_VERSION")));
     let status = runtime_snapshot();
-    let startup = wide(crate::startup::menu_label());
+    let startup_label = crate::startup::menu_label();
+    let startup = wide(startup_label);
     let summary = wide(
         &status
             .as_ref()
@@ -204,6 +206,9 @@ unsafe fn show_menu(hwnd: HWND) {
         let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(heading.as_ptr()));
         let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(summary.as_ptr()));
         let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(startup.as_ptr()));
+        if startup_label == "开机启动：指向其他版本" {
+            let _ = AppendMenuW(menu, MF_STRING, CMD_REPAIR_STARTUP, w!("修复开机启动路径"));
+        }
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, CMD_DASHBOARD, w!("打开监控面板 (&O)"));
         let _ = SetMenuDefaultItem(menu, CMD_DASHBOARD as u32, 0);
@@ -254,6 +259,10 @@ fn handle_command(command: usize) {
     match command {
         CMD_DASHBOARD => open_dashboard(),
         CMD_STATUS => show_status(),
+        CMD_REPAIR_STARTUP => match crate::startup::repair_existing() {
+            Ok(_) => message_box(crate::startup::menu_label()),
+            Err(error) => message_box(&format!("修复开机启动失败：{error:#}")),
+        },
         CMD_UPDATE => {
             if let Err(error) = crate::updater::check_for_updates() {
                 message_box(&format!("检查更新失败：{error:#}"));

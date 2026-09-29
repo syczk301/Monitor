@@ -24,6 +24,11 @@ fn main() -> Result<()> {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if env::args().any(|argument| argument == "--repair-autostart") {
+        startup::repair_existing()?;
+        println!("{}", startup::menu_label());
+        return Ok(());
+    }
     let paths = AppPaths::discover()?;
     paths.ensure()?;
     let file_appender = tracing_appender::rolling::daily(&paths.logs, "monitor-native.log");
@@ -52,6 +57,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
     apply_environment_overrides(&mut settings);
+    match startup::repair_existing() {
+        Ok(true) => tracing::info!("startup registration migrated to current executable"),
+        Ok(false) => {}
+        Err(error) => tracing::warn!("startup registration repair failed: {error:#}"),
+    }
     migrate_remote_nodes_to_https(&mut settings, &paths)?;
     let dashboard_url = dashboard_url(&settings.bind_address);
     let recording_root = settings.recording_root.clone();

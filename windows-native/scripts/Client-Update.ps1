@@ -1,6 +1,6 @@
 ﻿param(
     [string]$CurrentExe,
-    [string]$CurrentVersion = '4.8.2',
+    [string]$CurrentVersion = '4.8.3',
     [int]$ParentId = 0,
     [switch]$CheckOnly,
     [switch]$LibraryOnly

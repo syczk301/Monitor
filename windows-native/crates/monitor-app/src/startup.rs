@@ -2,11 +2,90 @@ use windows::{
     Win32::{
         Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND},
         System::Registry::{
-            HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, RRF_RT_REG_BINARY, RRF_RT_REG_SZ, RegGetValueW,
+            HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ,
+            RegGetValueW, RegSetKeyValueW,
         },
     },
     core::{PCWSTR, w},
 };
+
+const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+
+// Only migrate an existing registration. An absent entry or a Windows-disabled
+// StartupApproved record is the user's choice and must remain unchanged.
+pub fn repair_existing() -> anyhow::Result<bool> {
+    let current = std::env::current_exe()?;
+    repair_at(RUN_KEY, &current.to_string_lossy())
+}
+
+fn repair_at(key: PCWSTR, current: &str) -> anyhow::Result<bool> {
+    let existing =
+        read_value(key, RRF_RT_REG_SZ).map_err(|_| anyhow::anyhow!("读取开机启动项失败"))?;
+    let Some(existing) = existing else {
+        return Ok(false);
+    };
+    let command = decode_command(&existing).map_err(|_| anyhow::anyhow!("开机启动项格式无效"))?;
+    let Some((target, arguments)) = command_target(&command) else {
+        return Ok(false);
+    };
+    if same_path(target, current) {
+        return Ok(false);
+    }
+    let command = format!("\"{}\"{}", normalized_path(current), arguments);
+    let data: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            key,
+            w!("CameraMonitor"),
+            REG_SZ.0,
+            Some(data.as_ptr().cast()),
+            (data.len() * 2) as u32,
+        )
+        .ok()?;
+    }
+    Ok(true)
+}
+
+fn decode_command(data: &[u8]) -> Result<String, ()> {
+    if data.len() % 2 != 0 {
+        return Err(());
+    }
+    let units: Vec<u16> = data
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    String::from_utf16(&units).map_err(|_| ())
+}
+
+fn command_target(command: &str) -> Option<(&str, &str)> {
+    let command = command.trim_end_matches('\0').trim();
+    if command.is_empty() {
+        return None;
+    }
+    if let Some(quoted) = command.strip_prefix('"') {
+        let end = quoted.find('"')?;
+        return Some((&quoted[..end], &quoted[end + 1..]));
+    }
+    // Legacy entries may contain unquoted paths with spaces.
+    if let Some(end) = command.to_ascii_lowercase().find(".exe") {
+        return Some((&command[..end + 4], &command[end + 4..]));
+    }
+    Some((command, ""))
+}
+
+fn normalized_path(path: &str) -> String {
+    let path = path.replace('/', "\\");
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned()
+    }
+}
+
+fn same_path(target: &str, current: &str) -> bool {
+    normalized_path(target).eq_ignore_ascii_case(&normalized_path(current))
+}
 
 // Read each time the menu opens: Windows startup settings can change while we run.
 pub fn menu_label() -> &'static str {
@@ -14,21 +93,11 @@ pub fn menu_label() -> &'static str {
 }
 
 fn read_status() -> Result<&'static str, ()> {
-    let run = read_value(
-        w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
-        RRF_RT_REG_SZ,
-    )?;
+    let run = read_value(RUN_KEY, RRF_RT_REG_SZ)?;
     let Some(run) = run else {
         return Ok("开机启动：未开启");
     };
-    if run.len() % 2 != 0 {
-        return Err(());
-    }
-    let units: Vec<u16> = run
-        .chunks_exact(2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-        .collect();
-    let command = String::from_utf16(&units).map_err(|_| ())?;
+    let command = decode_command(&run)?;
     let current = std::env::current_exe().map_err(|_| ())?;
     let approved = read_value(
         w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run"),
@@ -64,18 +133,13 @@ fn read_value(key: PCWSTR, flags: REG_ROUTINE_FLAGS) -> Result<Option<Vec<u8>>, 
 }
 
 fn classify(command: &str, current: &str, approved: Option<&[u8]>) -> &'static str {
-    let command = command.trim_end_matches('\0').trim();
-    if command.is_empty() {
+    if command.trim_end_matches('\0').trim().is_empty() {
         return "开机启动：未开启";
     }
-    let target = command
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .unwrap_or(command);
-    if !target
-        .replace('/', "\\")
-        .eq_ignore_ascii_case(&current.replace('/', "\\"))
-    {
+    let Some((target, _)) = command_target(command) else {
+        return "开机启动：状态未知";
+    };
+    if !same_path(target, current) {
         return "开机启动：指向其他版本";
     }
     // Unknown or malformed Windows approval records must not be reported as enabled.
@@ -92,7 +156,83 @@ fn classify(command: &str, current: &str, approved: Option<&[u8]>) -> &'static s
 
 #[cfg(test)]
 mod tests {
-    use super::classify;
+    use super::*;
+
+    #[test]
+    fn arguments_and_extended_paths_are_not_other_versions() {
+        let path = r"C:\Program Files\CameraMonitor\CameraMonitor.exe";
+        assert_eq!(
+            classify(&format!("\"{path}\" --silent"), path, None),
+            "开机启动：已开启"
+        );
+        assert_eq!(
+            classify(path, &format!(r"\\?\{path}"), None),
+            "开机启动：已开启"
+        );
+        assert_eq!(classify("\"broken", path, None), "开机启动：状态未知");
+    }
+
+    #[test]
+    fn repairs_registered_path_without_enabling_missing_or_disabled_startup() {
+        use windows::Win32::System::Registry::{HKEY, RegCloseKey, RegCreateKeyW, RegDeleteTreeW};
+        let key: Vec<u16> = format!(
+            r"Software\CameraMonitorTests\Startup-{}",
+            std::process::id()
+        )
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+        let key_ptr = PCWSTR(key.as_ptr());
+        let current = r"D:\Program Files\monitor\CameraMonitor.exe";
+        let mut handle = HKEY::default();
+        unsafe {
+            RegCreateKeyW(HKEY_CURRENT_USER, key_ptr, &mut handle)
+                .ok()
+                .unwrap();
+        }
+        struct Cleanup(Vec<u16>, HKEY);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = RegCloseKey(self.1);
+                    let _ = RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(self.0.as_ptr()));
+                }
+            }
+        }
+        let _cleanup = Cleanup(key.clone(), handle);
+        assert!(!repair_at(key_ptr, current).unwrap());
+        assert!(read_value(key_ptr, RRF_RT_REG_SZ).unwrap().is_none());
+        let old: Vec<u16> = "\"C:\\old\\CameraMonitor.exe\" --silent"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                key_ptr,
+                w!("CameraMonitor"),
+                REG_SZ.0,
+                Some(old.as_ptr().cast()),
+                (old.len() * 2) as u32,
+            )
+            .ok()
+            .unwrap();
+        }
+        assert!(repair_at(key_ptr, current).unwrap());
+        let updated =
+            decode_command(&read_value(key_ptr, RRF_RT_REG_SZ).unwrap().unwrap()).unwrap();
+        assert_eq!(
+            updated.trim_end_matches('\0'),
+            format!("\"{current}\" --silent")
+        );
+        assert!(!repair_at(key_ptr, current).unwrap());
+        let mut disabled = [0u8; 12];
+        disabled[0] = 3;
+        assert_eq!(
+            classify(&updated, current, Some(&disabled)),
+            "开机启动：已被系统禁用"
+        );
+    }
 
     #[test]
     fn checks_target_and_windows_override() {
