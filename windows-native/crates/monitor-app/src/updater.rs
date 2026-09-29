@@ -9,6 +9,10 @@ use std::{
 static CHECKING: AtomicBool = AtomicBool::new(false);
 const SCRIPT: &str = include_str!("../../../scripts/Client-Update.ps1");
 
+pub fn is_checking() -> bool {
+    CHECKING.load(Ordering::Acquire)
+}
+
 pub fn check_for_updates() -> Result<()> {
     if CHECKING.swap(true, Ordering::AcqRel) {
         bail!("更新窗口已打开，请先完成或关闭该窗口");

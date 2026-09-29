@@ -1,10 +1,10 @@
 use anyhow::{Result, bail};
-use monitor_media::MediaController;
+use monitor_media::{MediaController, RuntimeStatus};
 use monitor_storage::RecordingMode;
 use std::{
     mem::size_of,
     path::PathBuf,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 use windows::{
     Win32::{
@@ -22,10 +22,11 @@ use windows::{
                 AppendMenuW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu,
                 CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, GetCursorPos,
                 GetMessageW, IDC_ARROW, LoadCursorW, LoadIconW, MB_ICONINFORMATION, MB_OK,
-                MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW, PostQuitMessage,
-                RegisterClassW, SW_SHOWNORMAL, SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-                TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_COMMAND, WM_DESTROY,
-                WM_LBUTTONDBLCLK, WM_NCCREATE, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+                MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW,
+                PostQuitMessage, RegisterClassW, SW_SHOWNORMAL, SetForegroundWindow,
+                SetMenuDefaultItem, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+                TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_COMMAND, WM_DESTROY,
+                WM_LBUTTONDBLCLK, WM_NCCREATE, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
             },
         },
     },
@@ -43,6 +44,7 @@ const CMD_UPDATE: usize = 1007;
 
 struct UiState {
     media: MediaController,
+    runtime: Arc<RwLock<RuntimeStatus>>,
     recording_root: PathBuf,
     dashboard_url: String,
 }
@@ -51,6 +53,7 @@ static UI_STATE: OnceLock<Mutex<UiState>> = OnceLock::new();
 
 pub fn run_tray(
     media: MediaController,
+    runtime: Arc<RwLock<RuntimeStatus>>,
     recording_root: PathBuf,
     dashboard_url: String,
 ) -> Result<()> {
@@ -67,6 +70,7 @@ pub fn run_tray(
     UI_STATE
         .set(Mutex::new(UiState {
             media,
+            runtime,
             recording_root,
             dashboard_url,
         }))
@@ -127,7 +131,13 @@ fn add_tray_icon(hwnd: HWND) -> Result<()> {
         hIcon: unsafe { LoadIconW(Some(instance.into()), PCWSTR(1usize as *const u16))? },
         ..Default::default()
     };
-    copy_wide(&mut data.szTip, "智能监控");
+    copy_wide(
+        &mut data.szTip,
+        &format!(
+            "智能监控 v{}\n双击打开监控面板 · 右键显示菜单",
+            env!("CARGO_PKG_VERSION")
+        ),
+    );
     if !unsafe { Shell_NotifyIconW(NIM_ADD, &data) }.as_bool() {
         bail!("adding tray icon failed");
     }
@@ -178,17 +188,43 @@ unsafe extern "system" fn window_proc(
 }
 
 unsafe fn show_menu(hwnd: HWND) {
-    let menu = unsafe { CreatePopupMenu() }.unwrap_or_default();
+    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
+        return;
+    };
+    let heading = wide(&format!("智能监控  v{}", env!("CARGO_PKG_VERSION")));
+    let status = runtime_snapshot();
+    let startup = wide(crate::startup::menu_label());
+    let summary = wide(
+        &status
+            .as_ref()
+            .map(recording_summary)
+            .unwrap_or_else(|| "正在读取状态…".into()),
+    );
     unsafe {
-        let _ = AppendMenuW(menu, MF_STRING, CMD_DASHBOARD, w!("打开监控面板"));
-        let _ = AppendMenuW(menu, MF_STRING, CMD_STATUS, w!("运行状态"));
-        let _ = AppendMenuW(menu, MF_STRING, CMD_UPDATE, w!("检查更新…"));
-        let _ = AppendMenuW(menu, MF_STRING, CMD_RECORDINGS, w!("打开录像目录"));
+        let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(heading.as_ptr()));
+        let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(summary.as_ptr()));
+        let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(startup.as_ptr()));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        let _ = AppendMenuW(menu, MF_STRING, CMD_START, w!("启动持续录像"));
-        let _ = AppendMenuW(menu, MF_STRING, CMD_STOP, w!("停止录像"));
+        let _ = AppendMenuW(menu, MF_STRING, CMD_DASHBOARD, w!("打开监控面板 (&O)"));
+        let _ = SetMenuDefaultItem(menu, CMD_DASHBOARD as u32, 0);
+        let _ = AppendMenuW(menu, MF_STRING, CMD_RECORDINGS, w!("打开录像文件夹 (&F)"));
+        let _ = AppendMenuW(menu, MF_STRING, CMD_STATUS, w!("查看运行状态 (&S)…"));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-        let _ = AppendMenuW(menu, MF_STRING, CMD_EXIT, w!("退出"));
+        let _ = AppendMenuW(menu, MF_STRING, CMD_START, w!("切换为持续录像 (&R)"));
+        let _ = AppendMenuW(menu, MF_STRING, CMD_STOP, w!("关闭自动录像 (&P)"));
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        let update_flags = if crate::updater::is_checking() {
+            MF_STRING | MF_GRAYED
+        } else {
+            MF_STRING
+        };
+        let update_text = if crate::updater::is_checking() {
+            w!("更新窗口已打开…")
+        } else {
+            w!("检查更新 (&U)…")
+        };
+        let _ = AppendMenuW(menu, update_flags, CMD_UPDATE, update_text);
+        let _ = AppendMenuW(menu, MF_STRING, CMD_EXIT, w!("退出智能监控 (&X)"));
         let mut point = POINT::default();
         let _ = GetCursorPos(&mut point);
         let _ = SetForegroundWindow(hwnd);
@@ -202,6 +238,7 @@ unsafe fn show_menu(hwnd: HWND) {
             None,
         );
         let _ = DestroyMenu(menu);
+        let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         if command.0 != 0 {
             let _ = PostMessageW(
                 Some(hwnd),
@@ -252,7 +289,50 @@ fn open_dashboard() {
     }
 }
 fn show_status() {
-    message_box("智能监控服务正在运行\n录像：1080p / 30FPS\nAI：已关闭");
+    let Some(status) = runtime_snapshot() else {
+        message_box("暂时无法读取运行状态，请稍后重试。");
+        return;
+    };
+    let mut text = format!(
+        "智能监控 v{}\n\n{}\n摄像头：{}\n采集：{} × {} / {:.1} FPS\n预览连接：{}\n声音连接：{}",
+        env!("CARGO_PKG_VERSION"),
+        recording_summary(&status),
+        if status.camera_name.is_empty() {
+            "尚未就绪"
+        } else {
+            &status.camera_name
+        },
+        status.width,
+        status.height,
+        status.fps,
+        status.preview_clients,
+        status.audio_clients,
+    );
+    if !status.recording_file.is_empty() {
+        text.push_str(&format!("\n\n当前录像：\n{}", status.recording_file));
+    }
+    for error in [&status.last_error, &status.recording_validation_error] {
+        if !error.is_empty() {
+            text.push_str(&format!("\n\n异常：{error}"));
+        }
+    }
+    message_box(&text);
+}
+
+fn runtime_snapshot() -> Option<RuntimeStatus> {
+    let state = UI_STATE.get()?.lock().ok()?;
+    let status = state.runtime.read().ok()?.clone();
+    Some(status)
+}
+
+fn recording_summary(status: &RuntimeStatus) -> String {
+    if !status.last_error.is_empty() || !status.recording_validation_error.is_empty() {
+        "运行异常 · 请查看运行状态".into()
+    } else if status.recording_active {
+        "正在录像".into()
+    } else {
+        "当前未录像".into()
+    }
 }
 
 fn shell_open(value: &str) {

@@ -1,6 +1,6 @@
 ﻿param(
     [string]$CurrentExe,
-    [string]$CurrentVersion = '4.8.0',
+    [string]$CurrentVersion = '4.8.1',
     [int]$ParentId = 0,
     [switch]$CheckOnly,
     [switch]$LibraryOnly
@@ -25,6 +25,8 @@ function Write-UpdateLog([string]$Message) {
 function Show-UpdateProgress([string]$Message, [int]$Percent = 0) {
     if ($script:Label) {
         $script:Label.Text = $Message
+        $script:Progress.Visible = $true
+        $script:Progress.Style = $(if ($script:Installing) { 'Marquee' } else { 'Continuous' })
         $script:Progress.Value = [Math]::Max(0, [Math]::Min(100, $Percent))
         [System.Windows.Forms.Application]::DoEvents()
     }
@@ -64,6 +66,7 @@ function Get-UpdateCandidate($Release, [string]$InstalledVersion) {
 
 function New-UpdateWebClient {
     $client = New-Object System.Net.WebClient
+    $client.Encoding = [Text.Encoding]::UTF8
     $client.Headers['User-Agent'] = 'CameraMonitor-Updater/4.8'
     $client.Headers['Accept'] = 'application/vnd.github+json'
     return $client
@@ -245,6 +248,257 @@ function Install-ClientUpdate($Candidate, [string]$Executable, [string]$Target, 
     Write-UpdateLog "Updated to $expectedVersion; backup: $backup"
 }
 
+# The form is shared by every update state; network waits pump messages so it stays responsive.
+function New-UpdateWindow {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    [Windows.Forms.Application]::EnableVisualStyles()
+    $script:UiState = 'checking'
+    $script:Busy = $false
+    $script:Candidate = $null
+    $script:Cancelled = $false
+    $script:Installing = $false
+    $script:Form = New-Object Windows.Forms.Form
+    $script:Form.Text = '智能监控 · 检查更新'
+    $script:Form.Font = New-Object Drawing.Font('Microsoft YaHei UI', 10)
+    $script:Form.AutoScaleDimensions = New-Object Drawing.SizeF(96, 96)
+    $script:Form.AutoScaleMode = 'Dpi'
+    $script:Form.ClientSize = New-Object Drawing.Size(620, 484)
+    $script:Form.BackColor = [Drawing.Color]::White
+    $script:Form.ForeColor = [Drawing.Color]::FromArgb(30, 41, 59)
+    $script:Form.StartPosition = 'CenterScreen'
+    $script:Form.FormBorderStyle = 'FixedDialog'
+    $script:Form.MaximizeBox = $false
+    $script:Form.MinimizeBox = $true
+    if ($CurrentExe -and (Test-Path -LiteralPath $CurrentExe)) {
+        try { $script:Form.Icon = [Drawing.Icon]::ExtractAssociatedIcon($CurrentExe) } catch { }
+    }
+
+    $brand = New-Object Windows.Forms.Label
+    $brand.Text = 'CAMERA MONITOR'
+    $brand.Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
+    $brand.ForeColor = [Drawing.Color]::FromArgb(37, 99, 235)
+    $brand.SetBounds(28, 22, 560, 24)
+
+    $script:Title = New-Object Windows.Forms.Label
+    $script:Title.Font = New-Object Drawing.Font('Microsoft YaHei UI', 19, [Drawing.FontStyle]::Bold)
+    $script:Title.SetBounds(25, 53, 567, 43)
+    $script:Label = New-Object Windows.Forms.Label
+    $script:Label.ForeColor = [Drawing.Color]::FromArgb(71, 85, 105)
+    $script:Label.SetBounds(28, 106, 564, 48)
+
+    $script:VersionLabel = New-Object Windows.Forms.Label
+    $script:VersionLabel.BackColor = [Drawing.Color]::FromArgb(241, 245, 249)
+    $script:VersionLabel.Padding = New-Object Windows.Forms.Padding(12, 0, 0, 0)
+    $script:VersionLabel.TextAlign = 'MiddleLeft'
+    $script:VersionLabel.SetBounds(28, 164, 564, 42)
+
+    $script:Notes = New-Object Windows.Forms.TextBox
+    $script:Notes.Multiline = $true
+    $script:Notes.ReadOnly = $true
+    $script:Notes.ScrollBars = 'Vertical'
+    $script:Notes.BorderStyle = 'None'
+    $script:Notes.BackColor = [Drawing.Color]::White
+    $script:Notes.ForeColor = [Drawing.Color]::FromArgb(71, 85, 105)
+    $script:Notes.SetBounds(28, 224, 564, 132)
+    $script:Notes.TabIndex = 2
+    $script:Notes.AccessibleName = '更新说明与详细信息'
+
+    $script:Progress = New-Object Windows.Forms.ProgressBar
+    $script:Progress.SetBounds(28, 374, 564, 6)
+    $script:Progress.MarqueeAnimationSpeed = 25
+    $script:Progress.TabStop = $false
+
+    $footer = New-Object Windows.Forms.Panel
+    $footer.BackColor = [Drawing.Color]::FromArgb(248, 250, 252)
+    $footer.SetBounds(0, 402, 620, 82)
+    $script:Hint = New-Object Windows.Forms.Label
+    $script:Hint.Font = New-Object Drawing.Font('Microsoft YaHei UI', 9)
+    $script:Hint.ForeColor = [Drawing.Color]::FromArgb(100, 116, 139)
+    $script:Hint.SetBounds(28, 15, 265, 53)
+    $script:Secondary = New-Object Windows.Forms.Button
+    $script:Secondary.Text = '关闭'
+    $script:Secondary.SetBounds(326, 22, 112, 38)
+    $script:Secondary.FlatStyle = 'Flat'
+    $script:Secondary.FlatAppearance.BorderColor = [Drawing.Color]::FromArgb(203, 213, 225)
+    $script:Secondary.BackColor = [Drawing.Color]::White
+    $script:Secondary.TabIndex = 1
+    $script:Primary = New-Object Windows.Forms.Button
+    $script:Primary.SetBounds(450, 22, 142, 38)
+    $script:Primary.FlatStyle = 'Flat'
+    $script:Primary.FlatAppearance.BorderSize = 0
+    $script:Primary.BackColor = [Drawing.Color]::FromArgb(37, 99, 235)
+    $script:Primary.ForeColor = [Drawing.Color]::White
+    $script:Primary.TabIndex = 0
+    $footer.Controls.AddRange(@($script:Hint, $script:Secondary, $script:Primary))
+    $script:Form.Controls.AddRange(@($brand, $script:Title, $script:Label, $script:VersionLabel, $script:Notes, $script:Progress, $footer))
+    $script:Form.AcceptButton = $script:Primary
+    $script:Form.CancelButton = $script:Secondary
+    $script:Secondary.add_Click({ if (-not $script:Installing) { $script:Form.Close() } })
+    $script:Primary.add_Click({
+        if ($script:Busy) { return }
+        if ($script:UiState -eq 'available') { Invoke-UpdateInstall }
+        elseif ($script:UiState -eq 'complete') { $script:Form.Close() }
+        else { Invoke-UpdateCheck }
+    })
+    $script:Form.add_FormClosing({
+        param($sender, $eventArgs)
+        if ($script:Installing) { $eventArgs.Cancel = $true }
+        else { $script:Cancelled = $true }
+    })
+    Set-UpdateView 'checking'
+}
+
+function Set-UpdateView([string]$State, [string]$Details = '') {
+    $script:UiState = $State
+    $script:VersionLabel.Text = "当前版本  v$CurrentVersion"
+    $script:Title.ForeColor = [Drawing.Color]::FromArgb(30, 41, 59)
+    $script:Progress.Visible = $false
+    $script:Primary.Enabled = $true
+    $script:Secondary.Enabled = $true
+    $script:Secondary.Text = '关闭'
+    $script:Primary.Text = '重新检查'
+    $script:Notes.Text = ''
+    $script:Hint.Text = "升级时会短暂重启客户端。"
+    switch ($State) {
+        'checking' {
+            $script:Title.Text = '正在检查更新'
+            $script:Label.Text = '正在获取最新稳定版本，请稍候…'
+            $script:Notes.Text = "检查更新不会中断当前录像。"
+            $script:Progress.Style = 'Marquee'
+            $script:Progress.Visible = $true
+            $script:Primary.Text = '正在检查…'
+            $script:Primary.Enabled = $false
+            $script:Secondary.Text = '取消'
+        }
+        'available' {
+            $script:Title.Text = '发现新版本'
+            $script:Label.Text = '新版已准备好。查看更新内容后，即可下载并升级。'
+            $script:VersionLabel.Text = "当前版本  v$CurrentVersion     →     最新版本  v$($script:Candidate.Version)"
+            $notes = $script:Candidate.Notes
+            if ([string]::IsNullOrWhiteSpace($notes)) { $notes = '此版本暂无更新说明。' }
+            $script:Notes.Text = "更新说明`r`n`r`n" + ($notes -replace '\r?\n', "`r`n")
+            $script:Primary.Text = '下载并升级'
+            $script:Secondary.Text = '暂不升级'
+            $script:Hint.Text = "升级前会保存当前录像。`r`n保留现有配置和证书。"
+        }
+        'latest' {
+            $script:Title.Text = '当前已是最新版本'
+            $script:Title.ForeColor = [Drawing.Color]::FromArgb(21, 128, 61)
+            $script:Label.Text = '你正在使用最新稳定版本，无需更新。'
+            $script:Notes.Text = "当前录像与监控服务继续运行。"
+            $script:Hint.Text = '已完成在线检查'
+        }
+        'ahead' {
+            $script:Title.Text = '当前版本较新'
+            $script:Label.Text = '本机版本高于在线稳定版，无需降级。'
+            $script:Notes.Text = '后续发布更高版本时，可以在这里升级。'
+            $script:Hint.Text = '已完成在线检查'
+        }
+        'unavailable' {
+            $script:Title.Text = '暂未找到可用更新'
+            $script:Label.Text = '更新源暂未提供可用的稳定版本，请稍后重新检查。'
+            $script:Notes.Text = '当前版本可以继续使用。'
+        }
+        'downloading' {
+            $script:Title.Text = '正在下载更新'
+            $script:Label.Text = '正在连接下载服务器…'
+            $script:Notes.Text = "下载期间可继续录像。`r`n下载完成后将校验文件、保存录像并重启客户端。"
+            $script:Primary.Text = '正在下载…'
+            $script:Primary.Enabled = $false
+            $script:Secondary.Text = '取消下载'
+            $script:Progress.Style = 'Continuous'
+            $script:Progress.Value = 0
+            $script:Progress.Visible = $true
+        }
+        'installing' {
+            $script:Title.Text = '正在安装更新'
+            $script:Label.Text = '正在保存当前录像，请稍候…'
+            $script:Notes.Text = "客户端将短暂重启。`r`n完成后会自动恢复监控服务。"
+            $script:Primary.Text = '正在安装…'
+            $script:Primary.Enabled = $false
+            $script:Secondary.Enabled = $false
+            $script:Hint.Text = '请等待安装完成'
+            $script:Progress.Style = 'Marquee'
+            $script:Progress.Visible = $true
+        }
+        'complete' {
+            $script:Title.Text = '更新完成'
+            $script:Title.ForeColor = [Drawing.Color]::FromArgb(21, 128, 61)
+            $script:Label.Text = "v$($script:Candidate.Version) 已启动，可以继续使用。"
+            $script:VersionLabel.Text = "当前版本  v$($script:Candidate.Version)"
+            $script:Notes.Text = '原有配置和证书已保留，旧版程序已备份。'
+            $script:Primary.Text = '完成'
+            $script:Secondary.Visible = $false
+            $script:Hint.Text = '客户端启动检查通过'
+        }
+        'error' {
+            $script:Title.Text = '更新未完成'
+            $script:Title.ForeColor = [Drawing.Color]::FromArgb(185, 28, 28)
+            $script:Label.Text = '请查看下方详情，确认网络连接后重试。'
+            $script:Notes.Text = "$Details`r`n`r`n日志位置：`r`n$script:LogPath"
+            $script:Primary.Text = '重试'
+            $script:Hint.Text = '详细信息可选中复制'
+        }
+    }
+}
+
+function Invoke-UpdateCheck {
+    if ($script:Busy) { return }
+    $script:Busy = $true
+    try {
+        Set-UpdateView 'checking'
+        [Windows.Forms.Application]::DoEvents()
+        if ($script:Cancelled) { return }
+        Write-UpdateLog "Checking for updates from $CurrentVersion"
+        $release = Get-LatestRelease
+        if ($script:Cancelled) { return }
+        $script:Candidate = Get-UpdateCandidate $release $CurrentVersion
+        if ($script:Candidate) { Set-UpdateView 'available' }
+        elseif ($null -eq $release) { Set-UpdateView 'unavailable' }
+        elseif ((ConvertTo-ReleaseVersion $release.tag_name) -lt (ConvertTo-ReleaseVersion $CurrentVersion)) { Set-UpdateView 'ahead' }
+        else { Set-UpdateView 'latest' }
+    } catch {
+        if (-not $script:Cancelled) {
+            Write-UpdateLog "ERROR: $_"
+            Set-UpdateView 'error' ([string]$_)
+        }
+    } finally { $script:Busy = $false }
+}
+
+function Invoke-UpdateInstall {
+    if ($script:Busy -or $null -eq $script:Candidate) { return }
+    $script:Busy = $true
+    try {
+        Set-UpdateView 'downloading'
+        [Windows.Forms.Application]::DoEvents()
+        if ($script:Cancelled) { return }
+        $working = Join-Path ([IO.Path]::GetTempPath()) ('CameraMonitor-download-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $working | Out-Null
+        $payload = Join-Path $working 'CameraMonitor.exe'
+        $checksum = Join-Path $working 'CameraMonitor.exe.sha256'
+        Receive-UpdateAsset $script:Candidate.Checksum $checksum
+        if ($script:Cancelled) { return }
+        Receive-UpdateAsset $script:Candidate.Executable $payload
+        Test-UpdatePayload $payload $checksum
+        if ($script:Cancelled) { return }
+        $script:Installing = $true
+        $script:Form.ControlBox = $false
+        Set-UpdateView 'installing'
+        Install-ClientUpdate $script:Candidate $payload $CurrentExe $ParentId
+        Set-UpdateView 'complete'
+    } catch {
+        if (-not $script:Cancelled) {
+            Write-UpdateLog "ERROR: $_"
+            Set-UpdateView 'error' ([string]$_)
+        }
+    } finally {
+        $script:Installing = $false
+        $script:Busy = $false
+        if (-not $script:Form.IsDisposed) { $script:Form.ControlBox = $true }
+    }
+}
+
 if ($LibraryOnly) { return }
 
 if ($CheckOnly) {
@@ -272,50 +526,9 @@ try {
     $logDirectory = Join-Path $env:LOCALAPPDATA 'CameraMonitor\logs'
     New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
     $script:LogPath = Join-Path $logDirectory 'update.log'
-    Write-UpdateLog "Checking for updates from $CurrentVersion"
-    $script:Form = New-Object System.Windows.Forms.Form
-    $script:Form.Text = 'Camera Monitor 更新'
-    $script:Form.ClientSize = New-Object Drawing.Size(460, 110)
-    $script:Form.StartPosition = 'CenterScreen'
-    $script:Form.FormBorderStyle = 'FixedDialog'
-    $script:Form.MaximizeBox = $false
-    $script:Label = New-Object System.Windows.Forms.Label
-    $script:Label.SetBounds(18, 16, 425, 40)
-    $script:Progress = New-Object System.Windows.Forms.ProgressBar
-    $script:Progress.SetBounds(18, 65, 425, 20)
-    $script:Form.Controls.AddRange(@($script:Label, $script:Progress))
-    $script:Form.add_FormClosing({
-        param($sender, $eventArgs)
-        if ($script:Installing) { $eventArgs.Cancel = $true } else { $script:Cancelled = $true }
-    })
-    $script:Form.Show()
-    Show-UpdateProgress '正在检查新版本…'
-    $release = Get-LatestRelease
-    $candidate = Get-UpdateCandidate $release $CurrentVersion
-    if ($script:Cancelled) { return }
-    if ($null -eq $candidate) {
-        $message = if ($null -eq $release) { '暂未发布可用的在线更新。当前版本：' + $CurrentVersion } else { '当前已是最新稳定版：' + $CurrentVersion }
-        [System.Windows.Forms.MessageBox]::Show($script:Form, $message, 'Camera Monitor') | Out-Null
-        return
-    }
-    $notes = $candidate.Notes
-    if ($notes.Length -gt 1500) { $notes = $notes.Substring(0, 1500) + '…' }
-    $answer = [System.Windows.Forms.MessageBox]::Show($script:Form,
-        "发现新版本 $($candidate.Version)，当前版本 $CurrentVersion。`r`n`r`n$notes`r`n`r`n是否下载并升级？升级时会保存当前录像并短暂重启客户端，现有配置和证书保留。",
-        'Camera Monitor 更新', 'YesNo', 'Question')
-    if ($answer -ne 'Yes') { return }
-    $working = Join-Path ([IO.Path]::GetTempPath()) ('CameraMonitor-download-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $working | Out-Null
-    $payload = Join-Path $working 'CameraMonitor.exe'
-    $checksum = Join-Path $working 'CameraMonitor.exe.sha256'
-    Receive-UpdateAsset $candidate.Checksum $checksum
-    Receive-UpdateAsset $candidate.Executable $payload
-    Test-UpdatePayload $payload $checksum
-    if ($script:Cancelled) { return }
-    $script:Installing = $true
-    $script:Form.ControlBox = $false
-    Install-ClientUpdate $candidate $payload $CurrentExe $ParentId
-    [System.Windows.Forms.MessageBox]::Show($script:Form, "已升级到 $($candidate.Version)，客户端已重新启动。", 'Camera Monitor') | Out-Null
+    New-UpdateWindow
+    $script:Form.add_Shown({ Invoke-UpdateCheck })
+    $null = $script:Form.ShowDialog()
 } catch {
     Write-UpdateLog "ERROR: $_"
     [System.Windows.Forms.MessageBox]::Show("更新未完成：$_`r`n可稍后重试。日志位于 $script:LogPath", 'Camera Monitor 更新', 'OK', 'Error') | Out-Null

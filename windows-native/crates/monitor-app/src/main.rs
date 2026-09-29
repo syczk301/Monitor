@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod native_ui;
+mod startup;
 mod updater;
 
 use anyhow::Result;
@@ -73,7 +74,7 @@ fn main() -> Result<()> {
         settings,
         paths: paths.clone(),
         repository,
-        runtime: runtime_status,
+        runtime: runtime_status.clone(),
         media: controller.clone(),
         preview,
         audio,
@@ -89,7 +90,7 @@ fn main() -> Result<()> {
         })?;
 
     tracing::info!("CameraMonitor Rust native runtime started");
-    native_ui::run_tray(controller, recording_root, dashboard_url)?;
+    native_ui::run_tray(controller, runtime_status, recording_root, dashboard_url)?;
     let _ = shutdown_tx.send(true);
     match web_thread.join() {
         Ok(result) => result?,
