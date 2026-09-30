@@ -22,7 +22,7 @@ use windows::{
                 AppendMenuW, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu,
                 CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, GetCursorPos,
                 GetMessageW, IDC_ARROW, LoadCursorW, LoadIconW, MB_ICONINFORMATION, MB_OK,
-                MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW,
+                MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW,
                 PostQuitMessage, RegisterClassW, SW_SHOWNORMAL, SetForegroundWindow,
                 SetMenuDefaultItem, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
                 TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_COMMAND, WM_DESTROY,
@@ -42,6 +42,7 @@ const CMD_STOP: usize = 1005;
 const CMD_EXIT: usize = 1006;
 const CMD_UPDATE: usize = 1007;
 const CMD_REPAIR_STARTUP: usize = 1008;
+const CMD_TOGGLE_STARTUP: usize = 1009;
 
 struct UiState {
     media: MediaController,
@@ -205,7 +206,10 @@ unsafe fn show_menu(hwnd: HWND) {
     unsafe {
         let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(heading.as_ptr()));
         let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(summary.as_ptr()));
-        let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(startup.as_ptr()));
+        append_startup_toggle(menu, startup_label == "开机启动：已开启");
+        if !matches!(startup_label, "开机启动：已开启" | "开机启动：未开启") {
+            let _ = AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, PCWSTR(startup.as_ptr()));
+        }
         if startup_label == "开机启动：指向其他版本" {
             let _ = AppendMenuW(menu, MF_STRING, CMD_REPAIR_STARTUP, w!("修复开机启动路径"));
         }
@@ -255,10 +259,50 @@ unsafe fn show_menu(hwnd: HWND) {
     }
 }
 
+unsafe fn append_startup_toggle(
+    menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
+    enabled: bool,
+) {
+    let flags = if enabled {
+        MF_STRING | MF_CHECKED
+    } else {
+        MF_STRING
+    };
+    unsafe {
+        let _ = AppendMenuW(menu, flags, CMD_TOGGLE_STARTUP, w!("开机启动 (&A)"));
+    }
+}
+
+#[cfg(test)]
+mod startup_menu_tests {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{GetMenuState, MF_BYCOMMAND};
+
+    #[test]
+    fn native_startup_menu_is_clickable_and_matches_enabled_state() {
+        for enabled in [false, true] {
+            unsafe {
+                let menu = CreatePopupMenu().unwrap();
+                append_startup_toggle(menu, enabled);
+                let state = GetMenuState(menu, CMD_TOGGLE_STARTUP as u32, MF_BYCOMMAND);
+                DestroyMenu(menu).unwrap();
+                assert_ne!(state, u32::MAX);
+                assert_eq!(state & MF_CHECKED.0 != 0, enabled);
+                assert_eq!(state & MF_GRAYED.0, 0);
+            }
+        }
+    }
+}
+
 fn handle_command(command: usize) {
     match command {
         CMD_DASHBOARD => open_dashboard(),
         CMD_STATUS => show_status(),
+        CMD_TOGGLE_STARTUP => {
+            if let Err(error) = crate::startup::toggle() {
+                message_box(&format!("切换开机启动失败：{error:#}"));
+            }
+        }
         CMD_REPAIR_STARTUP => match crate::startup::repair_existing() {
             Ok(_) => message_box(crate::startup::menu_label()),
             Err(error) => message_box(&format!("修复开机启动失败：{error:#}")),

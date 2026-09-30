@@ -2,14 +2,68 @@ use windows::{
     Win32::{
         Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND},
         System::Registry::{
-            HKEY_CURRENT_USER, REG_ROUTINE_FLAGS, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ,
-            RegGetValueW, RegSetKeyValueW,
+            HKEY_CURRENT_USER, REG_BINARY, REG_ROUTINE_FLAGS, REG_SZ, RRF_RT_REG_BINARY,
+            RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
         },
     },
     core::{PCWSTR, w},
 };
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+const APPROVED_KEY: PCWSTR =
+    w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run");
+
+pub fn toggle() -> anyhow::Result<()> {
+    let enabled =
+        read_status().map_err(|_| anyhow::anyhow!("读取开机启动状态失败"))? == "开机启动：已开启";
+    let current = std::env::current_exe()?;
+    set_enabled_at(RUN_KEY, APPROVED_KEY, &current.to_string_lossy(), !enabled)
+}
+
+fn set_enabled_at(
+    run_key: PCWSTR,
+    approved_key: PCWSTR,
+    current: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    if enabled {
+        // Explicit user opt-in also clears Task Manager's disabled state.
+        let mut approved = [0u8; 12];
+        approved[0] = 2;
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                approved_key,
+                w!("CameraMonitor"),
+                REG_BINARY.0,
+                Some(approved.as_ptr().cast()),
+                approved.len() as u32,
+            )
+            .ok()?;
+        }
+        let command: Vec<u16> = format!("\"{}\"", normalized_path(current))
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                run_key,
+                w!("CameraMonitor"),
+                REG_SZ.0,
+                Some(command.as_ptr().cast()),
+                (command.len() * 2) as u32,
+            )
+            .ok()?;
+        }
+    } else {
+        let result = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, run_key, w!("CameraMonitor")) };
+        if result != ERROR_FILE_NOT_FOUND && result != ERROR_PATH_NOT_FOUND {
+            result.ok()?;
+        }
+    }
+    Ok(())
+}
 
 // Only migrate an existing registration. An absent entry or a Windows-disabled
 // StartupApproved record is the user's choice and must remain unchanged.
@@ -99,10 +153,7 @@ fn read_status() -> Result<&'static str, ()> {
     };
     let command = decode_command(&run)?;
     let current = std::env::current_exe().map_err(|_| ())?;
-    let approved = read_value(
-        w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run"),
-        RRF_RT_REG_BINARY,
-    )?;
+    let approved = read_value(APPROVED_KEY, RRF_RT_REG_BINARY)?;
     Ok(classify(
         &command,
         &current.to_string_lossy(),
@@ -157,6 +208,77 @@ fn classify(command: &str, current: &str, approved: Option<&[u8]>) -> &'static s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_toggle_enables_current_exe_and_removes_registration() {
+        use windows::Win32::System::Registry::{HKEY, RegCloseKey, RegCreateKeyW, RegDeleteTreeW};
+        let key: Vec<u16> = format!(r"Software\CameraMonitorTests\Toggle-{}", std::process::id())
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let key_ptr = PCWSTR(key.as_ptr());
+        let mut handle = HKEY::default();
+        unsafe {
+            RegCreateKeyW(HKEY_CURRENT_USER, key_ptr, &mut handle)
+                .ok()
+                .unwrap();
+        }
+        struct Cleanup(Vec<u16>, HKEY);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = RegCloseKey(self.1);
+                    let _ = RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(self.0.as_ptr()));
+                }
+            }
+        }
+        let _cleanup = Cleanup(key.clone(), handle);
+        let approved: Vec<u16> = format!(
+            r"{}\Approved",
+            String::from_utf16(&key[..key.len() - 1]).unwrap()
+        )
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+        let approved_ptr = PCWSTR(approved.as_ptr());
+        let current = r"\\?\D:\Program Files\monitor\CameraMonitor.exe";
+        set_enabled_at(key_ptr, approved_ptr, current, true).unwrap();
+        let command =
+            decode_command(&read_value(key_ptr, RRF_RT_REG_SZ).unwrap().unwrap()).unwrap();
+        assert_eq!(
+            command.trim_end_matches('\0'),
+            r#""D:\Program Files\monitor\CameraMonitor.exe""#
+        );
+        let mut disabled = [0u8; 12];
+        disabled[0] = 3;
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                approved_ptr,
+                w!("CameraMonitor"),
+                REG_BINARY.0,
+                Some(disabled.as_ptr().cast()),
+                12,
+            )
+            .ok()
+            .unwrap();
+        }
+        assert_eq!(
+            classify(&command, current, Some(&disabled)),
+            "开机启动：已被系统禁用"
+        );
+        set_enabled_at(key_ptr, approved_ptr, current, true).unwrap();
+        let approval = read_value(approved_ptr, RRF_RT_REG_BINARY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            classify(&command, current, Some(&approval)),
+            "开机启动：已开启"
+        );
+        set_enabled_at(key_ptr, approved_ptr, current, false).unwrap();
+        assert!(read_value(key_ptr, RRF_RT_REG_SZ).unwrap().is_none());
+        set_enabled_at(key_ptr, approved_ptr, current, false).unwrap();
+    }
 
     #[test]
     fn arguments_and_extended_paths_are_not_other_versions() {
