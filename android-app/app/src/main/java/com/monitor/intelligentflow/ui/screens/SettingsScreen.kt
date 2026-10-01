@@ -61,13 +61,19 @@ data class AppUiState(
     val isConfigured: Boolean = false,
     val isChecking: Boolean = false,
     val errorMessage: String? = null,
-    val lastHealthSummary: String? = null
+    val lastHealthSummary: String? = null,
+    val zeroTierEnabled: Boolean = true,
+    val zeroTierNetworkId: String = "76fc96e4983d7f72",
+    val networkStatus: com.monitor.intelligentflow.network.NetworkStatus = com.monitor.intelligentflow.network.NetworkStatus(),
+    val updateStatus: com.monitor.intelligentflow.update.UpdateStatus = com.monitor.intelligentflow.update.UpdateStatus()
 )
 
 @Composable
 fun SettingsScreen(
     uiState: AppUiState,
-    onSave: (String, String, String) -> Unit,
+    onSave: (String, String, String, Boolean, String) -> Unit,
+    onCheckUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
     modifier: Modifier = Modifier,
     isEditing: Boolean = false
 ) {
@@ -75,6 +81,8 @@ fun SettingsScreen(
     var username by rememberSaveable(uiState.username) { mutableStateOf(uiState.username) }
     var password by rememberSaveable(uiState.password) { mutableStateOf(uiState.password) }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var zeroTierEnabled by rememberSaveable(uiState.zeroTierEnabled) { mutableStateOf(uiState.zeroTierEnabled) }
+    var networkId by rememberSaveable(uiState.zeroTierNetworkId) { mutableStateOf(uiState.zeroTierNetworkId) }
 
     val textFieldColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -123,9 +131,13 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(18.dp))
         ConnectionSummary(
-            connected = uiState.isConfigured && uiState.errorMessage == null,
-            address = uiState.baseUrl.ifBlank { "尚未设置服务器地址" }
+            connected = uiState.lastHealthSummary != null && (!uiState.zeroTierEnabled || uiState.networkStatus.ready),
+            address = uiState.baseUrl.ifBlank { "尚未设置服务器地址" },
+            configured = uiState.isConfigured
         )
+
+        NetworkAndUpdateSettings(uiState, zeroTierEnabled, { zeroTierEnabled = it }, networkId,
+            { networkId = it }, onCheckUpdate, onInstallUpdate)
 
         Spacer(Modifier.height(22.dp))
         Text("连接信息", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
@@ -191,7 +203,7 @@ fun SettingsScreen(
                 val url = baseUrl.trim().let {
                     if (it.isNotEmpty() && !it.startsWith("https://")) "https://$it" else it
                 }
-                onSave(url, username, password)
+                onSave(url, username, password, zeroTierEnabled, networkId)
             },
             enabled = !uiState.isChecking && baseUrl.isNotBlank(),
             modifier = Modifier
@@ -274,7 +286,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ConnectionSummary(connected: Boolean, address: String) {
+private fun ConnectionSummary(connected: Boolean, address: String, configured: Boolean) {
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surface)
@@ -297,7 +309,7 @@ private fun ConnectionSummary(connected: Boolean, address: String) {
             Text(address, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
-        Text(if (connected) "在线" else "未配置",
+        Text(if (connected) "在线" else if (configured) "待连接" else "未配置",
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
             color = if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)

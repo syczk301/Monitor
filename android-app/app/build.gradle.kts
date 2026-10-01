@@ -21,8 +21,8 @@ android {
         applicationId = "com.monitor.intelligentflow"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40701
-        versionName = "V4.7.1"
+        versionCode = 40900
+        versionName = "V4.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -76,6 +76,11 @@ android {
 }
 
 dependencies {
+    implementation(files("libs/libzt.aar"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     val composeBom = platform("androidx.compose:compose-bom:2024.09.00")
 
     implementation("androidx.core:core-ktx:1.13.1")

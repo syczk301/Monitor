@@ -15,7 +15,7 @@ class PcmAudioPlayer(
     private val onError: (String) -> Unit = {}
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val client = OkHttpClient.Builder()
+    private val client = com.monitor.intelligentflow.network.EmbeddedZeroTier.clientBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
