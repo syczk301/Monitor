@@ -20,7 +20,7 @@ class AppUpdaterTest {
             {"name":"monitor-V4.10.0-release.apk.sha256","browser_download_url":"${root}monitor-V4.10.0-release.apk.sha256"}]}
         ]""")
         val selected = selectAndroidUpdate(releases, 40900)!!
-        assertEquals("V4.10.0", selected.version)
+        assertEquals("4.10.0", selected.version)
         assertNotNull(selected.checksumUrl)
         assertNull(selectAndroidUpdate(releases, 41000))
     }

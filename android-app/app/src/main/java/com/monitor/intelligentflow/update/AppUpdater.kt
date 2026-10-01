@@ -135,7 +135,7 @@ internal fun selectAndroidUpdate(releases: JSONArray, currentVersion: Long): And
                 val asset = assets.getJSONObject(i)
                 val name = asset.optString("name")
                 val version = Regex("^monitor-([vV]?\\d+\\.\\d+\\.\\d+)-release\\.apk$")
-                    .matchEntire(name)?.groupValues?.get(1) ?: continue
+                    .matchEntire(name)?.groupValues?.get(1)?.removePrefix("v")?.removePrefix("V") ?: continue
                 if ((versionCode(version) ?: continue) <= currentVersion) continue
                 val url = asset.optString("browser_download_url")
                 if (!validAssetUrl(url)) continue
