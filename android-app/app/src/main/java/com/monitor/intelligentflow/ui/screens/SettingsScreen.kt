@@ -1,52 +1,23 @@
 package com.monitor.intelligentflow.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.CloudSync
-import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material.icons.rounded.VisibilityOff
-import androidx.compose.material.icons.rounded.Wifi
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -69,216 +40,95 @@ data class AppUiState(
 )
 
 @Composable
-fun SettingsScreen(
-    uiState: AppUiState,
-    onSave: (String, String, String, Boolean, String) -> Unit,
-    onCheckUpdate: () -> Unit,
-    onInstallUpdate: () -> Unit,
-    modifier: Modifier = Modifier,
-    isEditing: Boolean = false
-) {
+fun SettingsScreen(uiState: AppUiState, onSave: (String, String, String, Boolean, String) -> Unit,
+    onCheckUpdate: () -> Unit, onInstallUpdate: () -> Unit, modifier: Modifier = Modifier, isEditing: Boolean = false) {
     var baseUrl by rememberSaveable(uiState.baseUrl) { mutableStateOf(uiState.baseUrl) }
     var username by rememberSaveable(uiState.username) { mutableStateOf(uiState.username) }
     var password by rememberSaveable(uiState.password) { mutableStateOf(uiState.password) }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var authExpanded by rememberSaveable { mutableStateOf(false) }
     var zeroTierEnabled by rememberSaveable(uiState.zeroTierEnabled) { mutableStateOf(uiState.zeroTierEnabled) }
     var networkId by rememberSaveable(uiState.zeroTierNetworkId) { mutableStateOf(uiState.zeroTierNetworkId) }
-
-    val textFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = MaterialTheme.colorScheme.primary,
-        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-        focusedContainerColor = MaterialTheme.colorScheme.surface,
-        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-        cursorColor = MaterialTheme.colorScheme.primary,
-        focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
-        unfocusedLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .then(if (isEditing) Modifier else Modifier.windowInsetsPadding(WindowInsets.statusBars))
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 18.dp, vertical = 14.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Rounded.CloudSync, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(25.dp))
-            }
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(
-                    text = if (isEditing) "服务配置" else "连接服务",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "管理数据同步与访问凭据",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        Spacer(Modifier.height(18.dp))
-        ConnectionSummary(
-            connected = uiState.lastHealthSummary != null && (!uiState.zeroTierEnabled || uiState.networkStatus.ready),
-            address = uiState.baseUrl.ifBlank { "尚未设置服务器地址" },
-            configured = uiState.isConfigured
-        )
-
-        NetworkAndUpdateSettings(uiState, zeroTierEnabled, { zeroTierEnabled = it }, networkId,
-            { networkId = it }, onCheckUpdate, onInstallUpdate)
-
-        Spacer(Modifier.height(22.dp))
-        Text("连接信息", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
-        Spacer(Modifier.height(4.dp))
-        Text("地址必填，用户名和密码仅在服务启用认证时填写",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(14.dp))
-
-        OutlinedTextField(
-            value = baseUrl,
-            onValueChange = { baseUrl = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("服务器地址") },
-            placeholder = { Text("https://10.95.194.185:8000") },
-            leadingIcon = { Icon(Icons.Rounded.Wifi, null, Modifier.size(20.dp)) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            shape = RoundedCornerShape(14.dp),
-            colors = textFieldColors
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = username,
-            onValueChange = { username = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("用户名") },
-            placeholder = { Text("可选") },
-            leadingIcon = { Icon(Icons.Rounded.Person, null, Modifier.size(20.dp)) },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-            colors = textFieldColors
-        )
-
-        Spacer(Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("密码") },
-            placeholder = { Text("可选") },
-            leadingIcon = { Icon(Icons.Rounded.Lock, null, Modifier.size(20.dp)) },
-            trailingIcon = {
-                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Icon(
-                        if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                        contentDescription = if (passwordVisible) "隐藏密码" else "显示密码"
-                    )
+    val focus = LocalFocusManager.current
+    val dirty = baseUrl != uiState.baseUrl || username != uiState.username || password != uiState.password ||
+        zeroTierEnabled != uiState.zeroTierEnabled || networkId != uiState.zeroTierNetworkId
+    val connected = uiState.lastHealthSummary != null && uiState.errorMessage == null &&
+        (!uiState.zeroTierEnabled || uiState.networkStatus.ready)
+    Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)
+        .then(if (isEditing) Modifier else Modifier.windowInsetsPadding(WindowInsets.navigationBars)).imePadding()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("设置", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Text("管理连接与更新", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            },
-            singleLine = true,
-            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            shape = RoundedCornerShape(14.dp),
-            colors = textFieldColors
-        )
-
-        Spacer(Modifier.height(20.dp))
-
-        Button(
-            onClick = {
-                val url = baseUrl.trim().let {
-                    if (it.isNotEmpty() && !it.startsWith("https://")) "https://$it" else it
+                val tint = if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
+                Surface(color = tint.copy(alpha = 0.09f), shape = RoundedCornerShape(24.dp)) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(if (connected) Icons.Rounded.CheckCircle else Icons.Rounded.Info, null, tint = tint, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (connected) "服务已连接" else if (uiState.isConfigured) "等待连接" else "未配置",
+                            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = tint)
+                    }
                 }
-                onSave(url, username, password, zeroTierEnabled, networkId)
-            },
-            enabled = !uiState.isChecking && baseUrl.isNotBlank(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-            shape = RoundedCornerShape(14.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            if (uiState.isChecking) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.5.dp,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-                Spacer(Modifier.width(12.dp))
-                Text("连接中...", fontWeight = FontWeight.Bold)
-            } else {
-                Text(
-                    if (isEditing) "保存设置" else "建立连接",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+            }
+            SettingsSection {
+                SettingsSectionHeader(Icons.Rounded.Wifi, "服务器连接", "连接到摄像机服务")
+                Spacer(Modifier.height(14.dp))
+                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("服务器地址") }, placeholder = { Text("https://10.95.194.185:8000") },
+                    leadingIcon = { Icon(Icons.Rounded.Link, null) }, singleLine = true,
+                    trailingIcon = { if (baseUrl.isNotBlank()) IconButton(onClick = { baseUrl = "" }) {
+                        Icon(Icons.Rounded.Cancel, "清空服务器地址", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), shape = RoundedCornerShape(12.dp))
+                Spacer(Modifier.height(10.dp))
+                SettingsDisclosure(Icons.Rounded.Person, "访问认证",
+                    if (username.isNotBlank() || password.isNotBlank()) "已填写认证信息" else "未设置（可选）",
+                    authExpanded, { authExpanded = !authExpanded }, outlined = true)
+                AnimatedVisibility(authExpanded) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("仅在服务器启用认证时填写", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("用户名（可选）") },
+                            singleLine = true, leadingIcon = { Icon(Icons.Rounded.Person, null) },
+                            shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("密码（可选）") }, singleLine = true,
+                            leadingIcon = { Icon(Icons.Rounded.Lock, null) },
+                            trailingIcon = { IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                    if (passwordVisible) "隐藏密码" else "显示密码")
+                            } }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+            NetworkSettings(uiState, zeroTierEnabled, { zeroTierEnabled = it }, networkId, { networkId = it })
+            UpdateSettings(uiState, onCheckUpdate, onInstallUpdate)
+            uiState.errorMessage?.let { message ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
+                    Text(message, Modifier.fillMaxWidth().padding(14.dp), color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodyMedium)
+                }
             }
         }
-
-        AnimatedVisibility(
-            visible = uiState.errorMessage != null,
-            enter = fadeIn() + slideInVertically()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 20.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.1f))
-                    .padding(16.dp)
-            ) {
-                Text(
-                    uiState.errorMessage ?: "",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = uiState.lastHealthSummary != null,
-            enter = fadeIn() + slideInVertically()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 20.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f))
-                    .padding(16.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Rounded.CheckCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "连接成功",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp, bottom = 10.dp)) {
+                if (dirty && uiState.isConfigured) Text("有未保存的更改", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
+                Button(onClick = {
+                    focus.clearFocus()
+                    val url = baseUrl.trim().let { if (it.isNotEmpty() && !it.startsWith("https://")) "https://$it" else it }
+                    onSave(url, username, password, zeroTierEnabled, networkId.trim())
+                }, enabled = !uiState.isChecking && baseUrl.isNotBlank(), modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp)) {
+                    if (uiState.isChecking) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (uiState.isChecking) "连接中…" else if (isEditing) "保存设置" else "保存并连接",
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -286,32 +136,42 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ConnectionSummary(connected: Boolean, address: String, configured: Boolean) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
-            .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier.size(38.dp).clip(RoundedCornerShape(11.dp))
-                .background((if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Box(Modifier.size(8.dp).clip(RoundedCornerShape(8.dp))
-                .background(if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant))
+internal fun SettingsSection(content: @Composable ColumnScope.() -> Unit) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+        Column(Modifier.padding(14.dp), content = content)
+    }
+}
+
+@Composable
+internal fun SettingsSectionHeader(icon: ImageVector, title: String, subtitle: String, action: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+            Icon(icon, null, Modifier.padding(10.dp).size(22.dp), tint = MaterialTheme.colorScheme.primary)
         }
-        Spacer(Modifier.width(11.dp))
+        Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(if (connected) "服务已连接" else "等待连接",
-                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
-            Text(address, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(if (connected) "在线" else if (configured) "待连接" else "未配置",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+        action?.invoke()
+    }
+}
+
+@Composable
+internal fun SettingsDisclosure(icon: ImageVector, title: String, subtitle: String, expanded: Boolean, onClick: () -> Unit,
+    outlined: Boolean = false) {
+    Surface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = if (expanded) "收起$title" else "展开$title", onClick = onClick),
+        shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface,
+        border = if (outlined) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null) {
+        Row(Modifier.padding(vertical = 12.dp, horizontal = if (outlined) 10.dp else 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

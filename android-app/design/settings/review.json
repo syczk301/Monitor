@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-01",
+  "surface": "Android V4.9.1 settings",
+  "status": "Option 1 selected; native implementation and design QA passed",
+  "capture": "Read-only Android API 36.1 emulator, current release APK",
+  "steps": [
+    {
+      "step": 1,
+      "state": "First launch, not configured, embedded ZeroTier enabled",
+      "screenshot": "01-current.png",
+      "health": "Controls render, but server address is below network help and update controls.",
+      "findings": [
+        "Long permanently visible network help competes with initial setup.",
+        "Draft enabled switch and saved system-network status can appear together.",
+        "Main connection action sits at the end of the scrolling form."
+      ]
+    },
+    {
+      "step": 2,
+      "state": "Configured via emulator host HTTPS, system network, settings tab",
+      "screenshot": "02-current-editing.png",
+      "health": "Health check passed; editing and bottom navigation render.",
+      "findings": [
+        "Global SYNC NET heading plus service configuration heading take extra space.",
+        "Connection state appears in both global header and summary.",
+        "Update action separates network configuration from server fields."
+      ]
+    }
+  ],
+  "limits": [
+    "No screen-reader or large-font accessibility verification yet.",
+    "Generated screens are visual concepts with mock connection states, not implemented app screenshots."
+  ],
+  "displayed_option_mapping": {
+    "1": {
+      "file": "option-1.png",
+      "direction": "Connection-first grouped form"
+    },
+    "2": {
+      "file": "option-2.png",
+      "direction": "Connection/network/update segmented tabs"
+    },
+    "3": {
+      "file": "option-3.png",
+      "direction": "Settings summary rows with focused editing sheets"
+    }
+  },
+  "invariants": [
+    "Existing light/cobalt design system",
+    "All server/network/update functionality",
+    "Existing four bottom navigation destinations",
+    "Changes limited to settings layout"
+  ],
+  "selected_option": 1,
+  "implementation": "../../app/src/main/java/com/monitor/intelligentflow/ui/screens/SettingsScreen.kt",
+  "qa_report": "../../design-qa.md"
+}

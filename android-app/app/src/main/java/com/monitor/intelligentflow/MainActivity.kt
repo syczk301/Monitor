@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -51,6 +52,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -332,13 +334,14 @@ private fun MonitorApp(vm: MainViewModel) {
     }
 
     val api = vm.api ?: return
+    val settingsKeyboardVisible = selectedTab == AppTab.Settings && WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            if (!isFullscreen) {
+            if (!isFullscreen && selectedTab != AppTab.Settings) {
                 TopAppBar(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -422,12 +425,13 @@ private fun MonitorApp(vm: MainViewModel) {
                     onSave = vm::saveAndValidate,
                     onCheckUpdate = vm::checkForUpdates,
                     onInstallUpdate = vm::downloadOrInstallUpdate,
-                    modifier = Modifier.padding(innerPadding).padding(bottom = 80.dp),
+                    modifier = Modifier.padding(innerPadding).padding(bottom = if (settingsKeyboardVisible) 0.dp else 80.dp)
+                        .windowInsetsPadding(WindowInsets.navigationBars),
                     isEditing = true
                 )
             }
 
-            if (!isFullscreen) {
+            if (!isFullscreen && !settingsKeyboardVisible) {
                 val immersedNavigationColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
                 Box(
                     modifier = Modifier
