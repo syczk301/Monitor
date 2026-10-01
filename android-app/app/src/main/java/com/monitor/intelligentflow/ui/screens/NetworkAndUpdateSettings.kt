@@ -29,6 +29,8 @@ internal fun NetworkAndUpdateSettings(state: AppUiState, enabled: Boolean, onEna
         }
         Text("首次连接请在 ZeroTier 后台授权上方节点。连接仅供本 App 使用，无需打开独立 ZeroTier。",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("开启内置连接后，本 App 优先直连 Wi-Fi / 蜂窝网络。若 FlClash 限制绕过 VPN，请将监控 App 加入其应用排除列表。",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (enabled != state.zeroTierEnabled || networkId != state.zeroTierNetworkId) {
         Text("点击下方保存按钮应用连接设置", style = MaterialTheme.typography.bodySmall)

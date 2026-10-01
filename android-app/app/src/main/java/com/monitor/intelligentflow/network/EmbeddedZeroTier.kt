@@ -28,6 +28,7 @@ object EmbeddedZeroTier {
     private var node: ZeroTierNode? = null
     private var joined: Long? = null
     private var monitor: Job? = null
+    private var physicalRoute: PhysicalNetworkRoute? = null
     @Volatile private var endpoint: URI? = null
     private val bridgeDelegate = lazy { ConnectBridge { host, port ->
         val target = endpoint
@@ -83,8 +84,15 @@ object EmbeddedZeroTier {
         mutableStatus.value = NetworkStatus(enabled = enabled, message = if (enabled) "正在连接 ZeroTier…" else "使用系统网络")
         if (node != null && joined != null && joined != parsed) node!!.leave(joined!!)
         joined = parsed
-        if (!enabled) return@withLock
+        if (!enabled) {
+            physicalRoute?.close()
+            physicalRoute = null
+            return@withLock
+        }
         try {
+            val route = physicalRoute ?: PhysicalNetworkRoute(context).also { physicalRoute = it }
+            route.start()
+            route.awaitAvailable()
             if (node == null) {
                 val storage = java.io.File(context.noBackupFilesDir, "zerotier").apply { mkdirs() }
                 val created = ZeroTierNode()
@@ -103,8 +111,10 @@ object EmbeddedZeroTier {
                         check(active.join(parsed!!) == 0) { "加入 ZeroTier 网络失败" }
                         requested = true
                     }
-                    val ready = online && active.isNetworkTransportReady(parsed!!)
+                    val routeProblem = route.problem
+                    val ready = routeProblem == null && online && active.isNetworkTransportReady(parsed!!)
                     mutableStatus.value = NetworkStatus(true, ready, id, when {
+                        routeProblem != null -> routeProblem
                         ready -> "ZeroTier 已连接 · ${active.getIPv4Address(parsed).hostAddress}"
                         online -> "等待网络授权或分配地址，请在 ZeroTier 后台授权此节点"
                         else -> "正在连接 ZeroTier 根服务器…"

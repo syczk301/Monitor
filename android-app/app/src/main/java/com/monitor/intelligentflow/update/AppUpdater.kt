@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.net.ConnectivityManager
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.monitor.intelligentflow.BuildConfig
@@ -31,10 +32,20 @@ internal fun versionCode(name: String): Long? {
 
 class AppUpdater(private val context: Context) {
     // Public release requests never inherit the monitoring server's credentials or proxy.
-    private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).build()
+    internal fun systemClient(): OkHttpClient {
+        // activeNetwork is the system default (including FlClash), regardless of
+        // libzt's process binding. Explicit sockets and DNS keep updates on it.
+        val network = context.getSystemService(ConnectivityManager::class.java).activeNetwork
+            ?: throw IOException("没有可用的系统网络")
+        return OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS).socketFactory(network.socketFactory)
+            .dns(object : okhttp3.Dns {
+                override fun lookup(hostname: String) = network.getAllByName(hostname).toList()
+            }).build()
+    }
 
     suspend fun check(): AndroidRelease? = withContext(Dispatchers.IO) {
+        val client = systemClient()
         val request = Request.Builder().url("https://api.github.com/repos/syczk301/Monitor/releases?per_page=100")
             .header("Accept", "application/vnd.github+json").build()
         val releases = client.newCall(request).execute().use { response ->
@@ -45,6 +56,7 @@ class AppUpdater(private val context: Context) {
     }
 
     suspend fun download(release: AndroidRelease, progress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
+        val client = systemClient()
         require(validAssetUrl(release.url)) { "更新地址无效" }
         val expected = release.sha256 ?: release.checksumUrl?.let { url ->
             require(validAssetUrl(url))
