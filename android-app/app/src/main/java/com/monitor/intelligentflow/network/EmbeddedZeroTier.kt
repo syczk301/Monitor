@@ -61,6 +61,11 @@ object EmbeddedZeroTier {
     }
 
     fun clientBuilder(): OkHttpClient.Builder = OkHttpClient.Builder().proxySelector(selector)
+        .addInterceptor(TransportGate({ status.value }, { url ->
+            val target = endpoint
+            status.value.enabled && url.host == target?.host && url.scheme == "https" &&
+                url.port == (if (target.port == -1) 443 else target.port)
+        }))
         .proxyAuthenticator { route, response ->
             if (route?.proxy == bridge.proxy && response.request.header("Proxy-Authorization") == null) {
                 response.request.newBuilder().header("Proxy-Authorization", bridge.authorization).build()

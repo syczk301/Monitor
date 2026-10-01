@@ -70,30 +70,22 @@ class AppUpdater(private val context: Context) {
         val partial = File(directory, "monitor-update.part")
         val apk = File(directory, "monitor-update.apk")
         try {
+            ReleaseDownloader(client).download(release.url, partial, release.bytes, progress)
             val digest = MessageDigest.getInstance("SHA-256")
-            client.newCall(Request.Builder().url(release.url).build()).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("下载失败：HTTP ${response.code}")
-                val body = response.body ?: throw IOException("安装包为空")
-                body.byteStream().use { input -> partial.outputStream().use { output ->
-                    val buffer = ByteArray(65536)
-                    var received = 0L
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        received += count
-                        if (received > release.bytes) throw IOException("安装包大小超出发布记录")
-                        output.write(buffer, 0, count)
-                        digest.update(buffer, 0, count)
-                        progress((received * 100 / release.bytes).toInt())
-                    }
-                    if (received != release.bytes) throw IOException("安装包下载不完整")
-                } }
+            partial.inputStream().buffered().use { input ->
+                val buffer = ByteArray(128 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                }
             }
             val actual = digest.digest().joinToString("") { "%02x".format(it) }
             require(actual.equals(expected, true)) { "安装包 SHA-256 校验失败" }
             verifyApk(partial)
             if (apk.exists() && !apk.delete()) throw IOException("无法替换旧下载文件")
             if (!partial.renameTo(apk)) throw IOException("无法保存安装包")
+            progress(100)
             apk
         } finally { partial.delete() }
     }

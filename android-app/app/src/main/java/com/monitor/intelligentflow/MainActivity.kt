@@ -136,7 +136,7 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
     private val _uiState = MutableStateFlow(AppUiState())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
 
-    private var _api: MonitorApiService? = null
+    private var _api by mutableStateOf<MonitorApiService?>(null)
     val api: MonitorApiService? get() = _api
 
     init {
@@ -164,13 +164,15 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
                     zeroTierNetworkId = config.zeroTierNetworkId
                 )
                 if (config.isConfigured) {
-                    _api = MonitorApiService(config.baseUrl, config.username, config.password)
                     runCatching {
                         withContext(Dispatchers.IO) { EmbeddedZeroTier.configure(repository.context,
                             config.zeroTierEnabled, config.zeroTierNetworkId, config.baseUrl) }
                     }.onFailure { error ->
                         _uiState.value = _uiState.value.copy(errorMessage = error.message)
                     }
+                    _api = MonitorApiService(config.baseUrl, config.username, config.password)
+                    // Publish the API only after configure has selected the app transport.
+                    _uiState.value = _uiState.value.copy(networkStatus = EmbeddedZeroTier.status.value)
                 }
             }
         }
