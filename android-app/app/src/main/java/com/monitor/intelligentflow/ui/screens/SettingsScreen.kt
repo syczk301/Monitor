@@ -1,5 +1,7 @@
 package com.monitor.intelligentflow.ui.screens
 
+import com.monitor.intelligentflow.AppConfig
+import com.monitor.intelligentflow.TransportMode
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -26,34 +28,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 data class AppUiState(
-    val baseUrl: String = "",
-    val username: String = "",
-    val password: String = "",
+    val config: AppConfig = AppConfig(),
     val isConfigured: Boolean = false,
     val isChecking: Boolean = false,
     val errorMessage: String? = null,
     val lastHealthSummary: String? = null,
-    val zeroTierEnabled: Boolean = true,
-    val zeroTierNetworkId: String = "76fc96e4983d7f72",
     val networkStatus: com.monitor.intelligentflow.network.NetworkStatus = com.monitor.intelligentflow.network.NetworkStatus(),
     val updateStatus: com.monitor.intelligentflow.update.UpdateStatus = com.monitor.intelligentflow.update.UpdateStatus()
 )
 
 @Composable
-fun SettingsScreen(uiState: AppUiState, onSave: (String, String, String, Boolean, String) -> Unit,
+fun SettingsScreen(uiState: AppUiState, onSave: (AppConfig) -> Unit,
     onCheckUpdate: () -> Unit, onInstallUpdate: () -> Unit, modifier: Modifier = Modifier, isEditing: Boolean = false) {
-    var baseUrl by rememberSaveable(uiState.baseUrl) { mutableStateOf(uiState.baseUrl) }
-    var username by rememberSaveable(uiState.username) { mutableStateOf(uiState.username) }
-    var password by rememberSaveable(uiState.password) { mutableStateOf(uiState.password) }
+    var draft by remember(uiState.config) { mutableStateOf(uiState.config) }
+    val profile = draft.profile()
+    val baseUrl = profile.baseUrl
+    val username = profile.username
+    val password = profile.password
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
     var authExpanded by rememberSaveable { mutableStateOf(false) }
-    var zeroTierEnabled by rememberSaveable(uiState.zeroTierEnabled) { mutableStateOf(uiState.zeroTierEnabled) }
-    var networkId by rememberSaveable(uiState.zeroTierNetworkId) { mutableStateOf(uiState.zeroTierNetworkId) }
     val focus = LocalFocusManager.current
-    val dirty = baseUrl != uiState.baseUrl || username != uiState.username || password != uiState.password ||
-        zeroTierEnabled != uiState.zeroTierEnabled || networkId != uiState.zeroTierNetworkId
+    val dirty = draft != uiState.config
     val connected = uiState.lastHealthSummary != null && uiState.errorMessage == null &&
-        (!uiState.zeroTierEnabled || uiState.networkStatus.ready)
+        (uiState.config.mode == TransportMode.SYSTEM || uiState.networkStatus.ready)
     Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)
         .then(if (isEditing) Modifier else Modifier.windowInsetsPadding(WindowInsets.navigationBars)).imePadding()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 16.dp),
@@ -73,13 +70,14 @@ fun SettingsScreen(uiState: AppUiState, onSave: (String, String, String, Boolean
                     }
                 }
             }
+            NetworkSettings(uiState, draft, { draft = it })
             SettingsSection {
                 SettingsSectionHeader(Icons.Rounded.Wifi, "服务器连接", "连接到摄像机服务")
                 Spacer(Modifier.height(14.dp))
-                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, modifier = Modifier.fillMaxWidth(),
-                    label = { Text("服务器地址") }, placeholder = { Text("https://10.95.194.185:8000") },
+                OutlinedTextField(value = baseUrl, onValueChange = { draft = draft.withProfile(profile.copy(baseUrl = it)) }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("服务器地址") }, placeholder = { Text(if (draft.mode == TransportMode.TAILSCALE) "https://电脑名.网络名.ts.net" else "https://10.95.194.185:8000") },
                     leadingIcon = { Icon(Icons.Rounded.Link, null) }, singleLine = true,
-                    trailingIcon = { if (baseUrl.isNotBlank()) IconButton(onClick = { baseUrl = "" }) {
+                    trailingIcon = { if (baseUrl.isNotBlank()) IconButton(onClick = { draft = draft.withProfile(profile.copy(baseUrl = "")) }) {
                         Icon(Icons.Rounded.Cancel, "清空服务器地址", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     } },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), shape = RoundedCornerShape(12.dp))
@@ -90,10 +88,10 @@ fun SettingsScreen(uiState: AppUiState, onSave: (String, String, String, Boolean
                 AnimatedVisibility(authExpanded) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("仅在服务器启用认证时填写", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("用户名（可选）") },
+                        OutlinedTextField(value = username, onValueChange = { draft = draft.withProfile(profile.copy(username = it)) }, label = { Text("用户名（可选）") },
                             singleLine = true, leadingIcon = { Icon(Icons.Rounded.Person, null) },
                             shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("密码（可选）") }, singleLine = true,
+                        OutlinedTextField(value = password, onValueChange = { draft = draft.withProfile(profile.copy(password = it)) }, label = { Text("密码（可选）") }, singleLine = true,
                             leadingIcon = { Icon(Icons.Rounded.Lock, null) },
                             trailingIcon = { IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Icon(if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
@@ -104,7 +102,7 @@ fun SettingsScreen(uiState: AppUiState, onSave: (String, String, String, Boolean
                     }
                 }
             }
-            NetworkSettings(uiState, zeroTierEnabled, { zeroTierEnabled = it }, networkId, { networkId = it })
+
             UpdateSettings(uiState, onCheckUpdate, onInstallUpdate)
             uiState.errorMessage?.let { message ->
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
@@ -120,7 +118,7 @@ fun SettingsScreen(uiState: AppUiState, onSave: (String, String, String, Boolean
                 Button(onClick = {
                     focus.clearFocus()
                     val url = baseUrl.trim().let { if (it.isNotEmpty() && !it.startsWith("https://")) "https://$it" else it }
-                    onSave(url, username, password, zeroTierEnabled, networkId.trim())
+                    onSave(draft.withProfile(profile.copy(baseUrl = url)))
                 }, enabled = !uiState.isChecking && baseUrl.isNotBlank(), modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp)) {
                     if (uiState.isChecking) {

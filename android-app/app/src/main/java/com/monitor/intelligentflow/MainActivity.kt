@@ -1,6 +1,5 @@
 package com.monitor.intelligentflow
 
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -58,14 +57,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import com.monitor.intelligentflow.network.EmbeddedZeroTier
+import com.monitor.intelligentflow.network.EmbeddedTransport
 import com.monitor.intelligentflow.update.AppUpdater
 import com.monitor.intelligentflow.update.UpdateStatus
-import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -81,57 +75,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.net.URI
 
-private val Context.dataStore by preferencesDataStore(name = "app_config")
-
-data class AppConfig(
-    val baseUrl: String = "",
-    val username: String = "",
-    val password: String = "",
-    val zeroTierEnabled: Boolean = true,
-    val zeroTierNetworkId: String = "76fc96e4983d7f72"
-) {
-    val isConfigured: Boolean get() = baseUrl.isNotBlank()
-}
-
-class AppConfigRepository(val context: Context) {
-    private val baseUrlKey = stringPreferencesKey("base_url")
-    private val usernameKey = stringPreferencesKey("basic_auth_user")
-    private val passwordKey = stringPreferencesKey("basic_auth_password")
-    private val zeroTierEnabledKey = booleanPreferencesKey("zerotier_enabled")
-    private val zeroTierNetworkKey = stringPreferencesKey("zerotier_network_id")
-
-    val configFlow = context.dataStore.data
-        .catch { emit(emptyPreferences()) }
-        .map { prefs ->
-            AppConfig(
-                baseUrl = (prefs[baseUrlKey] ?: "").replaceFirst("http://", "https://"),
-                username = prefs[usernameKey] ?: "",
-                password = prefs[passwordKey] ?: "",
-                zeroTierEnabled = prefs[zeroTierEnabledKey] ?: ((prefs[baseUrlKey] ?: "").isBlank() ||
-                    runCatching { URI(prefs[baseUrlKey]).host?.startsWith("10.95.") == true }.getOrDefault(false)),
-                zeroTierNetworkId = prefs[zeroTierNetworkKey] ?: "76fc96e4983d7f72"
-            )
-        }
-
-    suspend fun save(config: AppConfig) {
-        context.dataStore.edit { prefs ->
-            prefs[baseUrlKey] = config.baseUrl
-            prefs[usernameKey] = config.username
-            prefs[passwordKey] = config.password
-            prefs[zeroTierEnabledKey] = config.zeroTierEnabled
-            prefs[zeroTierNetworkKey] = config.zeroTierNetworkId
-        }
-    }
-}
-
 class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
+    private val connectionMutex = Mutex()
+    private var appliedConfig: AppConfig? = null
     private val updater = AppUpdater(repository.context)
     private val _uiState = MutableStateFlow(AppUiState())
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
@@ -141,13 +94,14 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            EmbeddedZeroTier.status.collect { network ->
+            EmbeddedTransport.status.collect { network ->
                 val becameReady = network.ready && !_uiState.value.networkStatus.ready
                 _uiState.value = _uiState.value.copy(networkStatus = network)
                 if (becameReady && !_uiState.value.isChecking) {
-                    _api?.checkHealth()?.let { result ->
-                        _uiState.value = _uiState.value.copy(lastHealthSummary = result.getOrNull(),
-                            errorMessage = result.exceptionOrNull()?.message)
+                    val checkedApi = _api
+                    checkedApi?.checkHealth()?.let { result ->
+                        if (_api === checkedApi) _uiState.update { it.copy(lastHealthSummary = result.getOrNull(),
+                            errorMessage = result.exceptionOrNull()?.message) }
                     }
                 }
             }
@@ -155,62 +109,62 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
         checkForUpdates()
         viewModelScope.launch {
             repository.configFlow.collect { config ->
-                _uiState.value = _uiState.value.copy(
-                    baseUrl = config.baseUrl,
-                    username = config.username,
-                    password = config.password,
-                    isConfigured = config.isConfigured,
-                    zeroTierEnabled = config.zeroTierEnabled,
-                    zeroTierNetworkId = config.zeroTierNetworkId
-                )
-                if (config.isConfigured) {
-                    runCatching {
-                        withContext(Dispatchers.IO) { EmbeddedZeroTier.configure(repository.context,
-                            config.zeroTierEnabled, config.zeroTierNetworkId, config.baseUrl) }
-                    }.onFailure { error ->
-                        _uiState.value = _uiState.value.copy(errorMessage = error.message)
-                    }
-                    _api = MonitorApiService(config.baseUrl, config.username, config.password)
-                    // Publish the API only after configure has selected the app transport.
-                    _uiState.value = _uiState.value.copy(networkStatus = EmbeddedZeroTier.status.value)
+                connectionMutex.withLock {
+                    if (config != appliedConfig || _api == null) applyConnection(config)
                 }
             }
         }
     }
 
-    fun saveAndValidate(baseUrl: String, username: String, password: String, zeroTierEnabled: Boolean, networkId: String) {
-        val normalized = normalizeBaseUrl(baseUrl)
+    private suspend fun applyConnection(config: AppConfig) {
+        _uiState.update { it.copy(config = config, isConfigured = config.isConfigured, errorMessage = null) }
+        _api?.close()
+        _api = null
+        _uiState.update { it.copy(lastHealthSummary = null) }
+        try {
+            if (config.isConfigured) {
+                withContext(Dispatchers.IO) { EmbeddedTransport.configure(repository.context, config) }
+                _api = MonitorApiService(config.baseUrl, config.username, config.password)
+            }
+            appliedConfig = config
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            _uiState.update { it.copy(errorMessage = error.message) }
+        } finally {
+            _uiState.update { it.copy(networkStatus = EmbeddedTransport.status.value) }
+        }
+    }
+
+    fun saveAndValidate(draft: AppConfig) {
+        if (_uiState.value.isChecking) return
+        val normalized = normalizeBaseUrl(draft.baseUrl)
         if (normalized == null) {
-            _uiState.value = _uiState.value.copy(
-                errorMessage = "安全连接地址必须以 https:// 开头"
-            )
+            _uiState.update { it.copy(errorMessage = "安全连接地址必须以 https:// 开头，且不能包含账号、查询参数或路径") }
             return
         }
-
+        if (draft.mode == TransportMode.ZERO_TIER && !draft.zeroTierNetworkId.trim().matches(Regex("[0-9a-fA-F]{16}"))) {
+            _uiState.update { it.copy(errorMessage = "ZeroTier 网络 ID 必须是 16 位十六进制字符") }
+            return
+        }
+        val config = draft.withProfile(draft.profile().copy(baseUrl = normalized, username = draft.username.trim()))
+            .copy(zeroTierNetworkId = draft.zeroTierNetworkId.trim())
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isChecking = true, errorMessage = null, lastHealthSummary = null
-            )
-            val testApi = MonitorApiService(normalized, username.trim(), password)
-            val config = AppConfig(normalized, username.trim(), password, zeroTierEnabled, networkId.trim())
-            val result = runCatching {
-                withContext(Dispatchers.IO) { EmbeddedZeroTier.configure(repository.context, zeroTierEnabled, networkId.trim(), normalized) }
+            _uiState.update { it.copy(isChecking = true, errorMessage = null, lastHealthSummary = null) }
+            try {
+                // Persist before joining: first-time Tailscale login can finish later.
                 repository.save(config)
-                _api = testApi
-                EmbeddedZeroTier.awaitReady()
-                testApi.checkHealth().getOrThrow()
-            }
-            if (result.isSuccess) {
-                _api = testApi
-                _uiState.value = _uiState.value.copy(
-                    isChecking = false,
-                    lastHealthSummary = result.getOrNull()
-                )
-            } else {
-                _uiState.value = _uiState.value.copy(
-                    isChecking = false,
-                    errorMessage = result.exceptionOrNull()?.message ?: "连接失败"
-                )
+                connectionMutex.withLock {
+                    if (config != appliedConfig || _api == null) applyConnection(config)
+                }
+                val testApi = _api ?: error(_uiState.value.errorMessage ?: "连接尚未初始化")
+                EmbeddedTransport.awaitReady()
+                val summary = testApi.checkHealth().getOrThrow()
+                if (_api === testApi) _uiState.update { it.copy(lastHealthSummary = summary) }
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
+                _uiState.update { it.copy(errorMessage = error.message ?: "连接失败") }
+            } finally {
+                _uiState.update { it.copy(isChecking = false) }
             }
         }
     }
@@ -263,7 +217,8 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
         if (!trimmed.startsWith("https://")) return null
         return try {
             val uri = URI(trimmed)
-            if (uri.host.isNullOrBlank()) null else trimmed
+            if (uri.host.isNullOrBlank() || uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null ||
+                !uri.path.isNullOrEmpty() || uri.port == 0 || uri.port > 65535) null else trimmed
         } catch (_: Exception) { null }
     }
 }
@@ -329,7 +284,7 @@ private fun MonitorApp(vm: MainViewModel) {
         }
     }
 
-    if (!uiState.isConfigured) {
+    if (!uiState.isConfigured || vm.api == null) {
         SettingsScreen(uiState = uiState, onSave = vm::saveAndValidate,
             onCheckUpdate = vm::checkForUpdates, onInstallUpdate = vm::downloadOrInstallUpdate)
         return
@@ -381,7 +336,7 @@ private fun MonitorApp(vm: MainViewModel) {
                             )
                             Spacer(Modifier.size(6.dp))
                             Text(
-                                if (uiState.zeroTierEnabled && !uiState.networkStatus.ready) "连接中" else "服务已配置",
+                                if (uiState.config.mode != TransportMode.SYSTEM && !uiState.networkStatus.ready) "连接中" else "服务已配置",
                                 color = MaterialTheme.colorScheme.tertiary,
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold

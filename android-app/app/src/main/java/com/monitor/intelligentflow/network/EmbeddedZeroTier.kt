@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
 
 data class NetworkStatus(val enabled: Boolean = false, val ready: Boolean = false,
-    val nodeId: String = "", val message: String = "使用系统网络")
+    val nodeId: String = "", val message: String = "使用系统网络", val authUrl: String = "")
 
 /** App-private ZeroTier transport. HTTPS validation remains in Android/OkHttp. */
 object EmbeddedZeroTier {
@@ -83,13 +83,16 @@ object EmbeddedZeroTier {
         } else null
         if (joined == parsed && endpoint?.toString() == baseUrl && status.value.enabled == enabled &&
             (!enabled || monitor?.isActive == true)) return@withLock
-        monitor?.cancel()
+        monitor?.cancelAndJoin()
         if (bridgeDelegate.isInitialized()) bridge.disconnect()
         endpoint = URI(baseUrl.ifBlank { "https://localhost" })
         mutableStatus.value = NetworkStatus(enabled = enabled, message = if (enabled) "正在连接 ZeroTier…" else "使用系统网络")
         if (node != null && joined != null && joined != parsed) node!!.leave(joined!!)
         joined = parsed
         if (!enabled) {
+            // Leave the network and close all tunnels, but keep libzt's idle
+            // engine for reuse. Its JNI stop detaches the Java calling thread
+            // and aborts ART when invoked from a coroutine/Java thread.
             physicalRoute?.close()
             physicalRoute = null
             return@withLock

@@ -21,8 +21,8 @@ android {
         applicationId = "com.monitor.intelligentflow"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40905
-        versionName = "4.9.5"
+        versionCode = 40906
+        versionName = "4.9.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -77,6 +77,7 @@ android {
 
 dependencies {
     implementation(files("libs/libzt.aar"))
+    implementation(files("libs/tailscale.aar"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test:runner:1.6.2")

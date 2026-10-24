@@ -18,10 +18,15 @@ class MonitorApiService(
     private val username: String = "",
     private val password: String = ""
 ) {
-    private val client = com.monitor.intelligentflow.network.EmbeddedZeroTier.clientBuilder()
+    private val client = com.monitor.intelligentflow.network.EmbeddedTransport.clientBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
+
+    fun close() {
+        client.dispatcher.cancelAll()
+        client.connectionPool.evictAll()
+    }
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 

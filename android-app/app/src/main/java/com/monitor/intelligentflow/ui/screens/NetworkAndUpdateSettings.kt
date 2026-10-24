@@ -16,66 +16,62 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.monitor.intelligentflow.BuildConfig
+import com.monitor.intelligentflow.AppConfig
+import com.monitor.intelligentflow.TransportMode
+import androidx.compose.ui.platform.LocalUriHandler
 
 @Composable
-internal fun NetworkSettings(state: AppUiState, enabled: Boolean, onEnabled: (Boolean) -> Unit, networkId: String, onNetworkId: (String) -> Unit) {
-    var detailsExpanded by rememberSaveable { mutableStateOf(false) }
+internal fun NetworkSettings(state: AppUiState, draft: AppConfig, onChange: (AppConfig) -> Unit) {
     val clipboard = LocalClipboardManager.current
-    val pending = enabled != state.zeroTierEnabled || networkId != state.zeroTierNetworkId
+    val uriHandler = LocalUriHandler.current
+    val pending = draft.mode != state.config.mode || draft.profile() != state.config.profile() ||
+        (draft.mode == TransportMode.ZERO_TIER && draft.zeroTierNetworkId != state.config.zeroTierNetworkId)
     SettingsSection {
-        SettingsSectionHeader(Icons.Rounded.Hub, "网络连接", "通过 ZeroTier 远程访问")
+        SettingsSectionHeader(Icons.Rounded.Hub, "网络连接", "内置连接 · 分别保存各网络配置")
         Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("启用 ZeroTier", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text("启动 App 时自动连接", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TransportMode.entries.forEach { mode ->
+                FilterChip(selected = draft.mode == mode, onClick = { onChange(draft.copy(mode = mode)) },
+                    enabled = !state.isChecking, label = { Text(mode.label) })
             }
-            Switch(checked = enabled, onCheckedChange = onEnabled)
         }
-        Spacer(Modifier.height(8.dp))
-        val ready = enabled && !pending && state.networkStatus.ready
-        val statusMessage = when {
-            pending -> "保存后应用网络设置"
-            !enabled -> "使用系统网络"
-            !state.networkStatus.enabled -> "保存后启动内置连接"
-            else -> state.networkStatus.message
-        }
+        Text("切换后填写该网络的服务器地址和访问认证，点击保存生效。",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(10.dp))
+        val ready = !pending && state.networkStatus.ready
         Surface(color = (if (ready) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary).copy(alpha = 0.06f),
             shape = RoundedCornerShape(12.dp)) {
-            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (ready) Icons.Rounded.CheckCircle else Icons.Rounded.Info, null, Modifier.size(18.dp),
-                    tint = if (ready) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
-                Text(statusMessage, style = MaterialTheme.typography.bodySmall,
-                    color = if (ready) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (pending) "保存后连接 ${draft.mode.label}" else state.networkStatus.message,
+                Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.bodySmall)
+        }
+        if (draft.mode == TransportMode.ZERO_TIER) {
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(value = draft.zeroTierNetworkId, onValueChange = { onChange(draft.copy(zeroTierNetworkId = it)) },
+                label = { Text("ZeroTier 网络 ID") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp))
+            Text("首次连接后，在 ZeroTier 后台授权下方的设备节点。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (draft.mode == TransportMode.TAILSCALE) {
+            Spacer(Modifier.height(12.dp))
+            Text("首次保存后，点击登录按钮，在浏览器中登录并授权。身份保存在本应用中，无需安装 Tailscale App。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!pending && state.networkStatus.authUrl.isNotBlank()) {
+                Button(onClick = { uriHandler.openUri(state.networkStatus.authUrl) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.Login, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("登录 Tailscale")
+                }
             }
         }
-        if (enabled) {
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-            SettingsDisclosure(Icons.Rounded.Description, "网络详情", "网络 ID、节点信息与使用说明", detailsExpanded,
-                { detailsExpanded = !detailsExpanded })
-            AnimatedVisibility(detailsExpanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = networkId, onValueChange = onNetworkId, label = { Text("ZeroTier 网络 ID") },
-                        singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
-                    if (state.networkStatus.nodeId.isNotBlank()) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("设备节点 ID", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                SelectionContainer { Text(state.networkStatus.nodeId, style = MaterialTheme.typography.bodyMedium) }
-                            }
-                            IconButton(onClick = { clipboard.setText(AnnotatedString(state.networkStatus.nodeId)) }) {
-                                Icon(Icons.Rounded.ContentCopy, "复制设备节点 ID", tint = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                    }
-                    Text("首次连接", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    Text("在 ZeroTier 后台授权此设备节点。授权完成后会自动连接，无需打开独立 ZeroTier。",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("与 FlClash 同时使用", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    Text("内置连接优先直连 Wi-Fi / 蜂窝网络。如 VPN 禁止绕过，请在 FlClash 中排除监控 App。",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!pending && state.networkStatus.nodeId.isNotBlank() && draft.mode != TransportMode.SYSTEM) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("设备节点 ID", style = MaterialTheme.typography.labelMedium)
+                    SelectionContainer { Text(state.networkStatus.nodeId, style = MaterialTheme.typography.bodyMedium) }
+                }
+                IconButton(onClick = { clipboard.setText(AnnotatedString(state.networkStatus.nodeId)) }) {
+                    Icon(Icons.Rounded.ContentCopy, "复制设备节点 ID")
                 }
             }
         }

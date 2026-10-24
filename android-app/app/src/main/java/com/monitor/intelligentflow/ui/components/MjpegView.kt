@@ -146,7 +146,7 @@ fun MjpegView(
         }.apply { isDaemon = true; name = "mjpeg-bitmap-decoder"; start() }
 
         val networkThread = Thread {
-            val client = com.monitor.intelligentflow.network.EmbeddedZeroTier.clientBuilder()
+            val client = com.monitor.intelligentflow.network.EmbeddedTransport.clientBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS)
                 .build()

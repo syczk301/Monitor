@@ -23,13 +23,15 @@ class SettingsPreviewActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             IntelligentFlowMonitorTheme {
-                var state by remember { mutableStateOf(AppUiState(baseUrl = "https://10.95.194.185:8000",
-                    isConfigured = true, lastHealthSummary = "preview", zeroTierEnabled = true,
+                var state by remember { mutableStateOf(AppUiState(config = AppConfig(
+                    zeroTier = ConnectionProfile("https://10.95.194.185:8000"),
+                    tailscale = ConnectionProfile("https://camera.example.ts.net")),
+                    isConfigured = true, lastHealthSummary = "preview",
                     networkStatus = NetworkStatus(true, true, "f2836043ab", "ZeroTier 网络已连接"))) }
                 Column(Modifier.fillMaxSize()) {
-                    SettingsScreen(state, { url, user, pass, enabled, network ->
-                        state = state.copy(baseUrl = url, username = user, password = pass,
-                            zeroTierEnabled = enabled, zeroTierNetworkId = network)
+                    SettingsScreen(state, { config ->
+                        state = state.copy(config = config, networkStatus = NetworkStatus(
+                            config.mode != TransportMode.SYSTEM, true, message = "${config.mode.label} 已连接"))
                     }, {}, {}, Modifier.weight(1f), isEditing = true)
                     NavigationBar(windowInsets = WindowInsets.navigationBars) {
                         listOf("监控" to Icons.Rounded.Sensors, "记录" to Icons.Rounded.History,

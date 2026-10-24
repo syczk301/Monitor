@@ -30,7 +30,7 @@ internal class TransportGate(
             if (error.message?.contains("Unexpected response code for CONNECT: 502") == true) {
                 val current = status()
                 val detail = if (!current.ready) current.message else
-                    "ZeroTier 已连接，但无法连接服务器 ${chain.request().url.host}:${chain.request().url.port}；请检查服务器是否启动、地址与端口及防火墙"
+                    "内置网络已连接，但无法连接服务器 ${chain.request().url.host}:${chain.request().url.port}；请检查服务器是否启动、地址与端口及防火墙"
                 throw IOException(detail, error)
             }
             throw error
