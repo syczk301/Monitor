@@ -21,6 +21,6 @@ try {
     Copy-Item -LiteralPath $source -Destination $exe -Force
     $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText((Join-Path $directory 'CameraMonitor.exe.sha256'), "$hash  CameraMonitor.exe`n", [Text.Encoding]::ASCII)
-    Write-Host "Upload these two assets to GitHub Release v$version (stable, not prerelease):"
+    Write-Host "Add these Windows updater assets to the unified $version release alongside the Windows MSI, Android APK and its SHA-256 file:"
     Get-ChildItem -LiteralPath $directory | Select-Object Name,Length
 } finally { Pop-Location }
