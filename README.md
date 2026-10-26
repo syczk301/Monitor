@@ -4,16 +4,18 @@ Camera Monitor is a native Windows monitoring and continuous-recording applicati
 
 The companion Android app provides live video, audio and recording access, with embedded ZeroTier and Tailscale connections.
 
-## Download — 4.9.6
+## Download — 4.9.7
 
 Windows and Android are published together on the [same release page](https://github.com/syczk301/Monitor/releases/latest).
 
 | Platform | Download | Update from an installed version |
 | --- | --- | --- |
-| Windows x64 | [MSI installer](https://github.com/syczk301/Monitor/releases/download/v4.9.6/CameraMonitor-4.9.6-x64.msi) | Tray menu → Check for updates |
-| Android | [APK](https://github.com/syczk301/Monitor/releases/download/v4.9.6/monitor-4.9.6-release.apk) | Settings → Check for updates |
+| Windows x64 | [MSI installer](https://github.com/syczk301/Monitor/releases/download/4.9.7/CameraMonitor-4.9.7-x64.msi) | Tray menu → Check for updates |
+| Android | [APK](https://github.com/syczk301/Monitor/releases/download/4.9.7/monitor-4.9.7-release.apk) | Settings → Check for updates |
 
-Both clients use version **4.9.6**. The EXE and SHA-256 attachments on the release page support Windows automatic updates; the APK and its SHA-256 file support Android updates. Older platform-specific releases remain available as history.
+Both clients use version **4.9.7**. The EXE and SHA-256 attachments on the release page support Windows automatic updates; the APK and its SHA-256 file support Android updates. Older platform-specific releases remain available as history.
+
+Version 4.9.7 learns the computer's ZeroTier and Tailscale server addresses and selects the matching address when switching networks. Upgrade both clients, then connect through one working address to learn the other route. See [setup and manual override](android-app/docs/adaptive-network-addresses.md).
 
 ## Repository layout
 

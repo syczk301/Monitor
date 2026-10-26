@@ -1,8 +1,11 @@
-# Android 监控客户端 4.9.6
+# Android 监控客户端 4.9.7
 
 Kotlin + Jetpack Compose 原生客户端，提供实时监控、PCM 音频、录像和记录浏览。所有服务器请求使用 HTTPS 与项目 CA，保留证书验证。
 
 ## 内置 ZeroTier、Tailscale 与应用更新
+
+- 4.9.7 支持网络地址自动适配：电脑端也升级到 4.9.7 后，首次通过任意可用地址连接一次，手机自动学习同一电脑的 ZeroTier IP/端口与 Tailscale HTTPS 域名。切换网络时带入对应地址，保存后重连；可关闭自动适配保留手动地址。详情见 [自动地址说明](docs/adaptive-network-addresses.md)。
+- Tailscale 可以先启动登录，再填写服务器地址；后台地址同步保留正在编辑的内容。
 
 - 设置页可选择 ZeroTier、Tailscale 或系统网络，各自保存服务器地址、用户名和密码。切换选项后点击保存才会生效；旧版配置会自动迁移到原来的连接方式。
 - Tailscale 完整内置于 APK，通过 tsnet 用户态协议栈连接，无需另装 Tailscale App，不使用 Android VPN 槽位。

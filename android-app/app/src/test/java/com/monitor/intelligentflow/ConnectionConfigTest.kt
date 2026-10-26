@@ -31,8 +31,8 @@ class ConnectionConfigTest {
     }
 
     @Test fun switchingAndRestartingPreservesEachAddressAndCredentials() {
-        val zero = ConnectionProfile("https://10.95.1.2:8000", "zero-user", "zero-pass")
-        val tailscale = ConnectionProfile("https://camera.example.ts.net", "tail-user", "tail-pass")
+        val zero = ConnectionProfile("https://10.95.1.2:8000", "zero-user", "zero-pass", false, "camera-pc")
+        val tailscale = ConnectionProfile("https://camera.example.ts.net", "tail-user", "tail-pass", true, "camera-pc")
         val system = ConnectionProfile("https://192.168.1.2:8000", "local-user", "local-pass")
         val stored = mutablePreferencesOf()
         var config = AppConfig(zeroTier = zero, tailscale = tailscale, system = system)

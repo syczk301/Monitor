@@ -100,19 +100,43 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
                 if (becameReady && !_uiState.value.isChecking) {
                     val checkedApi = _api
                     checkedApi?.checkHealth()?.let { result ->
-                        if (_api === checkedApi) _uiState.update { it.copy(lastHealthSummary = result.getOrNull(),
-                            errorMessage = result.exceptionOrNull()?.message) }
+                        if (_api === checkedApi) {
+                            _uiState.update { it.copy(lastHealthSummary = result.getOrNull(), errorMessage = result.exceptionOrNull()?.message) }
+                            result.getOrNull()?.let { syncConnectionHints(checkedApi, it) }
+                        }
                     }
                 }
+            }
+        }
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                val checkedApi = _api ?: continue
+                if (_uiState.value.isChecking || (_uiState.value.networkStatus.enabled && !_uiState.value.networkStatus.ready)) continue
+                checkedApi.checkHealth().getOrNull()?.let { syncConnectionHints(checkedApi, it) }
             }
         }
         checkForUpdates()
         viewModelScope.launch {
             repository.configFlow.collect { config ->
                 connectionMutex.withLock {
-                    if (config != appliedConfig || _api == null) applyConnection(config)
+                    val previous = appliedConfig
+                    if (previous == null || !config.sameActiveConnection(previous) || (_api == null && config.isConfigured)) applyConnection(config)
+                    else {
+                        appliedConfig = config
+                        _uiState.update { it.copy(config = config, isConfigured = config.isConfigured) }
+                    }
                 }
             }
+        }
+    }
+
+    private suspend fun syncConnectionHints(checkedApi: MonitorApiService, health: String) {
+        connectionMutex.withLock {
+            if (_api !== checkedApi) return
+            val current = _uiState.value.config
+            val updated = current.withConnectionHints(health)
+            if (updated != current) repository.save(updated)
         }
     }
 
@@ -122,9 +146,20 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
         _api = null
         _uiState.update { it.copy(lastHealthSummary = null) }
         try {
+            withContext(Dispatchers.IO) { EmbeddedTransport.configure(repository.context, config) }
             if (config.isConfigured) {
-                withContext(Dispatchers.IO) { EmbeddedTransport.configure(repository.context, config) }
                 _api = MonitorApiService(config.baseUrl, config.username, config.password)
+                if (!_uiState.value.isChecking) {
+                    val createdApi = _api!!
+                    viewModelScope.launch {
+                        createdApi.checkHealth().getOrNull()?.let { summary ->
+                            if (_api === createdApi) {
+                                _uiState.update { it.copy(lastHealthSummary = summary) }
+                                syncConnectionHints(createdApi, summary)
+                            }
+                        }
+                    }
+                }
             }
             appliedConfig = config
         } catch (error: Exception) {
@@ -137,7 +172,8 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
 
     fun saveAndValidate(draft: AppConfig) {
         if (_uiState.value.isChecking) return
-        val normalized = normalizeBaseUrl(draft.baseUrl)
+        val loginOnly = draft.mode == TransportMode.TAILSCALE && draft.baseUrl.isBlank()
+        val normalized = if (loginOnly) "" else normalizeBaseUrl(draft.baseUrl)
         if (normalized == null) {
             _uiState.update { it.copy(errorMessage = "安全连接地址必须以 https:// 开头，且不能包含账号、查询参数或路径") }
             return
@@ -156,10 +192,14 @@ class MainViewModel(private val repository: AppConfigRepository) : ViewModel() {
                 connectionMutex.withLock {
                     if (config != appliedConfig || _api == null) applyConnection(config)
                 }
+                if (loginOnly) return@launch
                 val testApi = _api ?: error(_uiState.value.errorMessage ?: "连接尚未初始化")
                 EmbeddedTransport.awaitReady()
                 val summary = testApi.checkHealth().getOrThrow()
-                if (_api === testApi) _uiState.update { it.copy(lastHealthSummary = summary) }
+                if (_api === testApi) {
+                    _uiState.update { it.copy(lastHealthSummary = summary) }
+                    syncConnectionHints(testApi, summary)
+                }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
                 _uiState.update { it.copy(errorMessage = error.message ?: "连接失败") }

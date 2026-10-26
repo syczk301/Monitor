@@ -21,7 +21,7 @@ import com.monitor.intelligentflow.TransportMode
 import androidx.compose.ui.platform.LocalUriHandler
 
 @Composable
-internal fun NetworkSettings(state: AppUiState, draft: AppConfig, onChange: (AppConfig) -> Unit) {
+internal fun NetworkSettings(state: AppUiState, draft: AppConfig, onChange: (AppConfig) -> Unit, onStartTailscale: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     val uriHandler = LocalUriHandler.current
     val pending = draft.mode != state.config.mode || draft.profile() != state.config.profile() ||
@@ -35,7 +35,7 @@ internal fun NetworkSettings(state: AppUiState, draft: AppConfig, onChange: (App
                     enabled = !state.isChecking, label = { Text(mode.label) })
             }
         }
-        Text("切换后填写该网络的服务器地址和访问认证，点击保存生效。",
+        Text("切换时会带入该网络的地址和认证，点击保存后重新连接。",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(10.dp))
         val ready = !pending && state.networkStatus.ready
@@ -54,15 +54,18 @@ internal fun NetworkSettings(state: AppUiState, draft: AppConfig, onChange: (App
         }
         if (draft.mode == TransportMode.TAILSCALE) {
             Spacer(Modifier.height(12.dp))
-            Text("首次保存后，点击登录按钮，在浏览器中登录并授权。身份保存在本应用中，无需安装 Tailscale App。",
+            Text("可先登录，无需预先填写地址。连接过同一服务器后，地址会自动同步；无需安装 Tailscale App。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (!pending && state.networkStatus.authUrl.isNotBlank()) {
-                Button(onClick = { uriHandler.openUri(state.networkStatus.authUrl) }, modifier = Modifier.fillMaxWidth()) {
+            val loginUrl = if (state.config.mode == TransportMode.TAILSCALE) state.networkStatus.authUrl else ""
+            if (state.config.mode != TransportMode.TAILSCALE || !state.networkStatus.ready) {
+                Button(onClick = { if (loginUrl.isNotBlank()) uriHandler.openUri(loginUrl) else onStartTailscale() },
+                    enabled = loginUrl.isNotBlank() || !state.isChecking, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Rounded.Login, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("登录 Tailscale")
+                    Text(if (loginUrl.isNotBlank()) "登录 Tailscale" else if (state.isChecking) "正在准备登录…" else "启动 Tailscale 登录")
                 }
             }
+
         }
         if (!pending && state.networkStatus.nodeId.isNotBlank() && draft.mode != TransportMode.SYSTEM) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

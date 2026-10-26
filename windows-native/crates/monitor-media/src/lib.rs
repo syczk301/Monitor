@@ -1,3 +1,6 @@
+mod connection_endpoints;
+pub use connection_endpoints::{ConnectionEndpoint, connection_endpoints};
+
 use anyhow::{Context, Result};
 use chrono::{Datelike, Local, Timelike};
 use crossbeam_channel::{Receiver, Sender, bounded};

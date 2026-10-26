@@ -18,6 +18,44 @@ import java.io.IOException
 
 @RunWith(AndroidJUnit4::class)
 class EmbeddedTailscaleTest {
+    @Test fun learnsCurrentWindowsOverlayAddressesFromHttpsMetadata() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val fixture = InstrumentationRegistry.getArguments().getString("endpointFixture")
+        org.junit.Assume.assumeTrue("Requires the read-only Windows metadata fixture", fixture != null)
+        val config = AppConfig(mode = TransportMode.SYSTEM, system = ConnectionProfile(fixture!!))
+        EmbeddedTransport.configure(instrumentation.targetContext, config)
+        val api = com.monitor.intelligentflow.data.MonitorApiService(fixture)
+        try {
+            val learned = config.withConnectionHints(api.checkHealth().getOrThrow())
+            assertTrue(learned.zeroTier.baseUrl, learned.zeroTier.baseUrl.matches(Regex("https://[0-9.]+:8000")))
+            assertTrue(learned.tailscale.baseUrl, learned.tailscale.baseUrl.endsWith(".ts.net"))
+            assertTrue(learned.zeroTier.serverName.isNotBlank())
+            assertEquals(learned.zeroTier.serverName, learned.tailscale.serverName)
+            val repository = AppConfigRepository(instrumentation.targetContext)
+            val original = repository.configFlow.first()
+            try {
+                repository.save(learned)
+                val loaded = repository.configFlow.first()
+                assertEquals(learned.zeroTier.baseUrl, loaded.copy(mode = TransportMode.ZERO_TIER).baseUrl)
+                assertEquals(learned.tailscale.baseUrl, loaded.copy(mode = TransportMode.TAILSCALE).baseUrl)
+            } finally { repository.save(original) }
+        } finally { api.close() }
+    }
+
+    @Test fun canStartTailscaleLoginBeforeEnteringServerAddress() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val loginOnly = AppConfig(mode = TransportMode.TAILSCALE)
+        try {
+            EmbeddedTransport.configure(context, loginOnly)
+            val status = withTimeout(45_000) {
+                EmbeddedTransport.status.first { it.authUrl.isNotBlank() || it.ready || it.message.contains("失败") }
+            }
+            assertFalse(status.message, status.message.contains("失败"))
+            assertTrue(status.message, status.ready || status.authUrl.startsWith("https://"))
+            assertFalse(loginOnly.isConfigured)
+        } finally { EmbeddedTransport.configure(context, AppConfig(mode = TransportMode.SYSTEM)) }
+    }
+
     @Test fun embeddedNodeProducesLoginAndSwitchesWithoutExternalVpn() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val system = AppConfig(mode = TransportMode.SYSTEM, system = ConnectionProfile("https://localhost"))

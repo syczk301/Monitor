@@ -27,7 +27,10 @@ object EmbeddedTransport {
     private var pool = ConnectionPool()
 
     suspend fun configure(context: Context, config: AppConfig) = mutex.withLock {
-        if (config == configured) return@withLock
+        if (configured?.let { config.sameActiveConnection(it) } == true) {
+            configured = config
+            return@withLock
+        }
         switching = true
         try {
             generation++
@@ -45,7 +48,7 @@ object EmbeddedTransport {
             mode = config.mode
             val source = when (mode) {
                 TransportMode.ZERO_TIER -> {
-                    EmbeddedZeroTier.configure(context, true, config.zeroTierNetworkId, config.baseUrl)
+                EmbeddedZeroTier.configure(context, config.isConfigured, config.zeroTierNetworkId, config.baseUrl)
                     EmbeddedZeroTier.status
                 }
                 TransportMode.TAILSCALE -> {

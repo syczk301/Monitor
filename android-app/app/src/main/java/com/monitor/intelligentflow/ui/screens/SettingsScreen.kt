@@ -2,6 +2,7 @@ package com.monitor.intelligentflow.ui.screens
 
 import com.monitor.intelligentflow.AppConfig
 import com.monitor.intelligentflow.TransportMode
+import com.monitor.intelligentflow.mergeConnectionDraft
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -40,7 +41,12 @@ data class AppUiState(
 @Composable
 fun SettingsScreen(uiState: AppUiState, onSave: (AppConfig) -> Unit,
     onCheckUpdate: () -> Unit, onInstallUpdate: () -> Unit, modifier: Modifier = Modifier, isEditing: Boolean = false) {
-    var draft by remember(uiState.config) { mutableStateOf(uiState.config) }
+    var draft by remember { mutableStateOf(uiState.config) }
+    var previousConfig by remember { mutableStateOf(uiState.config) }
+    LaunchedEffect(uiState.config) {
+        draft = mergeConnectionDraft(draft, previousConfig, uiState.config)
+        previousConfig = uiState.config
+    }
     val profile = draft.profile()
     val baseUrl = profile.baseUrl
     val username = profile.username
@@ -51,6 +57,8 @@ fun SettingsScreen(uiState: AppUiState, onSave: (AppConfig) -> Unit,
     val dirty = draft != uiState.config
     val connected = uiState.lastHealthSummary != null && uiState.errorMessage == null &&
         (uiState.config.mode == TransportMode.SYSTEM || uiState.networkStatus.ready)
+    val loggedInWithoutAddress = draft.mode == TransportMode.TAILSCALE && baseUrl.isBlank() &&
+        uiState.config.mode == TransportMode.TAILSCALE && uiState.networkStatus.ready
     Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)
         .then(if (isEditing) Modifier else Modifier.windowInsetsPadding(WindowInsets.navigationBars)).imePadding()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 16.dp),
@@ -70,11 +78,22 @@ fun SettingsScreen(uiState: AppUiState, onSave: (AppConfig) -> Unit,
                     }
                 }
             }
-            NetworkSettings(uiState, draft, { draft = it })
+            NetworkSettings(uiState, draft, { draft = it }, {
+                // Login is independent of an unsubmitted server-address edit.
+                onSave(draft.withProfile(draft.profile().copy(baseUrl = uiState.config.tailscale.baseUrl)))
+            })
             SettingsSection {
-                SettingsSectionHeader(Icons.Rounded.Wifi, "服务器连接", "连接到摄像机服务")
+                SettingsSectionHeader(Icons.Rounded.Wifi, "${draft.mode.label} 服务器", "切换网络时自动使用对应地址")
+                if (draft.mode != TransportMode.SYSTEM) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("自动适配服务器地址", style = MaterialTheme.typography.titleSmall)
+                        Text("电脑端 4.9.7 起支持。首次连通任一网络后同步对应地址；关闭后使用手动地址", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = profile.automaticAddress, onCheckedChange = { draft = draft.withProfile(profile.copy(automaticAddress = it)) })
+                }
                 Spacer(Modifier.height(14.dp))
-                OutlinedTextField(value = baseUrl, onValueChange = { draft = draft.withProfile(profile.copy(baseUrl = it)) }, modifier = Modifier.fillMaxWidth(),
+                OutlinedTextField(value = baseUrl, onValueChange = { draft = draft.withProfile(profile.copy(baseUrl = it, serverName = "")) }, modifier = Modifier.fillMaxWidth(),
                     label = { Text("服务器地址") }, placeholder = { Text(if (draft.mode == TransportMode.TAILSCALE) "https://电脑名.网络名.ts.net" else "https://10.95.194.185:8000") },
                     leadingIcon = { Icon(Icons.Rounded.Link, null) }, singleLine = true,
                     trailingIcon = { if (baseUrl.isNotBlank()) IconButton(onClick = { draft = draft.withProfile(profile.copy(baseUrl = "")) }) {
@@ -119,13 +138,13 @@ fun SettingsScreen(uiState: AppUiState, onSave: (AppConfig) -> Unit,
                     focus.clearFocus()
                     val url = baseUrl.trim().let { if (it.isNotEmpty() && !it.startsWith("https://")) "https://$it" else it }
                     onSave(draft.withProfile(profile.copy(baseUrl = url)))
-                }, enabled = !uiState.isChecking && baseUrl.isNotBlank(), modifier = Modifier.fillMaxWidth().height(48.dp),
+                }, enabled = !uiState.isChecking && !loggedInWithoutAddress && (baseUrl.isNotBlank() || draft.mode == TransportMode.TAILSCALE), modifier = Modifier.fillMaxWidth().height(48.dp),
                     shape = RoundedCornerShape(12.dp)) {
                     if (uiState.isChecking) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (uiState.isChecking) "连接中…" else if (isEditing) "保存设置" else "保存并连接",
+                    Text(if (uiState.isChecking) "连接中…" else if (loggedInWithoutAddress) "已登录，请填写地址" else if (baseUrl.isBlank() && draft.mode == TransportMode.TAILSCALE) "启动 Tailscale 登录" else if (isEditing) "保存设置" else "保存并连接",
                         style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 }
             }

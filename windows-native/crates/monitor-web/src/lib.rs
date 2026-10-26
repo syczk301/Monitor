@@ -319,14 +319,29 @@ async fn tray_icon() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "image/png")], TRAY_ICON)
 }
 
+#[derive(Serialize)]
+pub struct ConnectionMetadata {
+    pub computer_name: String,
+    pub connection_endpoints: Vec<monitor_media::ConnectionEndpoint>,
+}
+
+pub async fn connection_metadata(bind: String) -> ConnectionMetadata {
+    let endpoints = tokio::time::timeout(Duration::from_secs(2), tokio::task::spawn_blocking(move ||
+        monitor_media::connection_endpoints(&bind))).await.ok().and_then(|result| result.ok()).unwrap_or_default();
+    ConnectionMetadata { computer_name: computer_name(), connection_endpoints: endpoints }
+}
+
 async fn health(State(state): State<WebState>) -> Json<Value> {
     let runtime = state.runtime.read().expect("runtime poisoned").clone();
+    let bind = state.settings.read().expect("settings poisoned").bind_address.clone();
+    let connection = connection_metadata(bind).await;
     Json(json!({
         "status": if runtime.last_error.is_empty() && runtime.recording_validation_error.is_empty() { "ok" } else { "degraded" },
         "runtime": "rust-native",
         "protocol": "https",
         "version": env!("CARGO_PKG_VERSION"),
-        "computer_name": computer_name(),
+        "computer_name": connection.computer_name,
+        "connection_endpoints": connection.connection_endpoints,
         "fps": runtime.fps,
         "inference_fps": 0.0,
         "latency_ms": 0.0,

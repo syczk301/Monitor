@@ -37,8 +37,8 @@ object EmbeddedTailscale {
         endpoint = null
         mutableStatus.value = NetworkStatus(enabled, message = if (enabled) "正在启动 Tailscale…" else "使用系统网络")
         if (!enabled) return
-        val target = URI(baseUrl)
-        require(target.scheme == "https" && !target.host.isNullOrBlank()) { "请先填写 HTTPS 服务器地址" }
+        val target = baseUrl.takeIf { it.isNotBlank() }?.let { URI(it) }
+        require(target == null || (target.scheme == "https" && !target.host.isNullOrBlank())) { "请填写 HTTPS 服务器地址" }
         endpoint = target
         try {
             val physical = PhysicalNetworkRoute(context).also { route = it }
@@ -49,6 +49,7 @@ object EmbeddedTailscale {
             val directory = File(context.noBackupFilesDir, "tailscale").apply { mkdirs() }
             val active = Tsbridge.start(directory.absolutePath, "camera-monitor-android").also { node = it }
             bridge = ConnectBridge { host, port ->
+                val target = endpoint ?: throw IOException("请先选择服务器地址")
                 if (!status.value.ready || host != target.host || port != (if (target.port == -1) 443 else target.port)) {
                     throw IOException(status.value.message)
                 }
