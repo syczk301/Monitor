@@ -21,8 +21,8 @@ android {
         applicationId = "com.monitor.intelligentflow"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40908
-        versionName = "4.9.8"
+        versionCode = 40910
+        versionName = "4.9.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

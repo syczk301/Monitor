@@ -39,6 +39,9 @@ object EmbeddedZeroTier {
         val family = if (host.contains(':')) ZeroTierNative.ZTS_AF_INET6 else ZeroTierNative.ZTS_AF_INET
         val socket = ZeroTierSocket(family, ZeroTierNative.ZTS_SOCK_STREAM, 0)
         try {
+            // TLS control records and flow-control writes are small. Do not
+            // hold them for another packet on a high-latency overlay link.
+            socket.setTcpNoDelayEnabled(true)
             val result = ZeroTierNative.zts_connect(socket.nativeFileDescriptor, host, port, 10000)
             if (result < 0) throw IOException("ZeroTier 连接失败 ($result)")
             NativeTunnel(socket)

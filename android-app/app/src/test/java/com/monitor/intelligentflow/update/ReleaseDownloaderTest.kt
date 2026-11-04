@@ -6,12 +6,63 @@ import org.junit.Test
 import java.net.ServerSocket
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 
 class ReleaseDownloaderTest {
+    @Test fun resumesFromReceivedBytesAfterConnectionDrops() {
+        val payload = ByteArray(1000) { it.toByte() }
+        val ranges = CopyOnWriteArrayList<String>()
+        serve(2, { headers ->
+            val range = Regex("Range: bytes=(\\d+)-(\\d+)", RegexOption.IGNORE_CASE).find(headers)!!
+            ranges += range.groupValues[1]
+            val start = range.groupValues[1].toInt()
+            val data = if (start == 0) payload.copyOfRange(0, 400) else payload.copyOfRange(start, payload.size)
+            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $start-999/1000\r\nContent-Length: ${1000-start}\r\nConnection: close\r\n\r\n".toByteArray() + data
+        }) { url ->
+            val file = File.createTempFile("monitor-resume", ".part")
+            try {
+                ReleaseDownloader(OkHttpClient(), 1, 0).download(url, file, 1000) { }
+                assertArrayEquals(payload, file.readBytes())
+                assertEquals(listOf("0", "400"), ranges.toList())
+            } finally { file.delete() }
+        }
+    }
+
+    @Test fun retriesTemporaryServerFailure() {
+        val attempts = java.util.concurrent.atomic.AtomicInteger()
+        serve(2, {
+            if (attempts.incrementAndGet() == 1)
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".toByteArray()
+            else "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc".toByteArray()
+        }) { url ->
+            val file = File.createTempFile("monitor-retry", ".part")
+            try {
+                ReleaseDownloader(OkHttpClient(), retryDelayMs = 0).download(url, file, 3) { }
+                assertEquals("abc", file.readText())
+            } finally { file.delete() }
+        }
+    }
+
+    @Test fun retriesReadTimeoutAndStopsAfterBoundedAttempts() {
+        serve(4, {
+            "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\n".toByteArray()
+        }, { Thread.sleep(600) }) { url ->
+            val file = File.createTempFile("monitor-timeout", ".part")
+            try {
+                val client = OkHttpClient.Builder().readTimeout(200, TimeUnit.MILLISECONDS).build()
+                try {
+                    ReleaseDownloader(client, retryDelayMs = 0).download(url, file, 3) { }
+                    fail("Stalled download accepted")
+                } catch (error: IOException) {
+                    assertTrue(error.message.orEmpty().contains("多次中断"))
+                    assertTrue(error.cause is java.net.SocketTimeoutException)
+                }
+            } finally { file.delete() }
+        }
+    }
+
     private fun serve(count: Int, response: (String) -> ByteArray, beforeBody: (() -> Unit)? = null, action: (String) -> Unit) {
         ServerSocket(0).use { server ->
             server.soTimeout = 5000
@@ -54,17 +105,15 @@ class ReleaseDownloaderTest {
         }
     }
 
-    @Test fun downloadsFourConcurrentRangesAndPreservesExactBytes() {
-        val payload = ByteArray(1_000_003) { (it % 251).toByte() }
-        val opened = CountDownLatch(4)
+    @Test fun downloadsSequentialRangesAndPreservesExactBytes() {
+        val payload = ByteArray(5_000_003) { (it % 251).toByte() }
         val progress = CopyOnWriteArrayList<Int>()
-        serve(4, { headers ->
+        serve(3, { headers ->
             val range = Regex("Range: bytes=(\\d+)-(\\d+)", RegexOption.IGNORE_CASE).find(headers)!!
             val start = range.groupValues[1].toInt()
             val end = range.groupValues[2].toInt()
-            opened.countDown()
             "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $start-$end/${payload.size}\r\nContent-Length: ${end-start+1}\r\nConnection: close\r\n\r\n".toByteArray() + payload.copyOfRange(start, end + 1)
-        }, { assertTrue("All four ranges must be in flight together", opened.await(3, TimeUnit.SECONDS)) }) { url ->
+        }) { url ->
             val file = File.createTempFile("monitor-range", ".part")
             try {
                 ReleaseDownloader(OkHttpClient(), 1).download(url, file, payload.size.toLong()) { progress += it }

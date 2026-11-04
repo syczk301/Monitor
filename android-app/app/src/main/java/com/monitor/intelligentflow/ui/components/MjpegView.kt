@@ -86,6 +86,7 @@ fun MjpegView(
     onStreamFps: (Double) -> Unit = {},
     showFullscreenControl: Boolean = true,
     onVideoTap: () -> Unit = {},
+    onStreamDiagnostics: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
@@ -103,6 +104,7 @@ fun MjpegView(
     var gestureVersion by remember { mutableIntStateOf(0) }
     val streamFpsCallback = rememberUpdatedState(onStreamFps)
     val videoTapCallback = rememberUpdatedState(onVideoTap)
+    val diagnosticsCallback = rememberUpdatedState(onStreamDiagnostics)
 
     LaunchedEffect(streamUrl) {
         currentFrame = null
@@ -120,6 +122,7 @@ fun MjpegView(
     }
 
     DisposableEffect(streamUrl, authHeader) {
+        diagnosticsCallback.value("正在采样，约 5 秒后显示")
         val running = AtomicBoolean(true)
         // Keep just one encoded and one decoded frame. A slow UI never builds a queue.
         val latestFrame = LinkedBlockingQueue<ByteArray>(1)
@@ -130,6 +133,9 @@ fun MjpegView(
         val receivedBytes = AtomicLong()
         val decodeNanos = AtomicLong()
         val decodeFailures = AtomicInteger()
+        val connectionAttempts = AtomicInteger()
+        val lastStreamError = AtomicReference<String?>(null)
+        val streamProtocol = AtomicReference("连接中")
         val activeCall = AtomicReference<okhttp3.Call?>(null)
         val mainHandler = Handler(Looper.getMainLooper())
         val choreographer = Choreographer.getInstance()
@@ -157,7 +163,17 @@ fun MjpegView(
                     val decoded = decodedFrames.getAndSet(0)
                     val failures = decodeFailures.getAndSet(0)
                     val decodeMs = decodeNanos.getAndSet(0) / 1_000_000.0 / (decoded + failures).coerceAtLeast(1)
-                    android.util.Log.d("MjpegPreview", "receivedFps=${receivedFrames.getAndSet(0) / seconds} decodedFps=${decoded / seconds} renderedFps=${diagnosticRendered / seconds} receivedMbps=${receivedBytes.getAndSet(0) * 8 / seconds / 1_000_000} decodeMs=$decodeMs decodeFailures=$failures")
+                    val receivedFps = receivedFrames.getAndSet(0) / seconds
+                    val decodedFps = decoded / seconds
+                    val drawnFps = diagnosticRendered / seconds
+                    val mbps = receivedBytes.getAndSet(0) * 8 / seconds / 1_000_000
+                    android.util.Log.d("MjpegPreview", "receivedFps=$receivedFps decodedFps=$decodedFps renderedFps=$drawnFps receivedMbps=$mbps decodeMs=$decodeMs decodeFailures=$failures")
+                    diagnosticsCallback.value(
+                        "近 5 秒：接收 %.1f / 解码 %.1f / 绘制 %.1f FPS\n接收 %.2f Mbps · 解码 %.1f ms · 失败 %d 次"
+                            .format(receivedFps, decodedFps, drawnFps, mbps, decodeMs, failures)
+                            + "\n视频连接：${streamProtocol.get()} · 重连 ${maxOf(0, connectionAttempts.get() - 1)} 次"
+                            + (lastStreamError.get()?.let { "\n最近接收错误：$it" } ?: "")
+                    )
                     diagnosticAt = now
                     diagnosticRendered = 0
                 }
@@ -184,7 +200,7 @@ fun MjpegView(
         }.apply { isDaemon = true; name = "mjpeg-bitmap-decoder"; start() }
 
         val networkThread = Thread {
-            val client = com.monitor.intelligentflow.network.EmbeddedTransport.clientBuilder()
+            val client = com.monitor.intelligentflow.network.EmbeddedTransport.streamClientBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(10, TimeUnit.SECONDS)
                 .build()
@@ -194,9 +210,11 @@ fun MjpegView(
                         val req = Request.Builder().url(streamUrl)
                         authHeader?.let { req.header("Authorization", it) }
                         val call = client.newCall(req.build())
+                        connectionAttempts.incrementAndGet()
                         activeCall.set(call)
                         call.execute().use { response ->
                             check(response.isSuccessful) { "HTTP ${response.code}" }
+                            streamProtocol.set(response.protocol.toString())
                             val body = response.body ?: throw EOFException("视频流为空")
                             val input = BufferedInputStream(body.byteStream(), 64 * 1024)
                             while (running.get()) {
@@ -208,6 +226,8 @@ fun MjpegView(
                         }
                     } catch (e: Exception) {
                         if (running.get()) {
+                            // Keep diagnostics free of hostnames, URLs and credentials.
+                            lastStreamError.set(e.javaClass.simpleName)
                             mainHandler.post { if (running.get()) error = e.message }
                             try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
                         }

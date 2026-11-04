@@ -89,4 +89,14 @@ object EmbeddedTransport {
         try { withTimeout(30_000) { status.first { !it.enabled || it.ready } } }
         catch (_: TimeoutCancellationException) { throw IOException(status.value.message) }
     }
+
+    /** A live body must not share HTTP/2 flow control or pool eviction with API calls. */
+    fun streamClientBuilder(): OkHttpClient.Builder = isolatedStreamBuilder(
+        clientBuilder(), mode != TransportMode.SYSTEM
+    )
 }
+
+internal fun isolatedStreamBuilder(builder: OkHttpClient.Builder, embedded: Boolean): OkHttpClient.Builder =
+    builder.connectionPool(ConnectionPool()).apply {
+        if (embedded) protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+    }

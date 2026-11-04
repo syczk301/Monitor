@@ -56,7 +56,10 @@ class AppUpdater(private val context: Context) {
     }
 
     suspend fun download(release: AndroidRelease, progress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
-        val client = systemClient()
+        val client = systemClient().newBuilder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
         require(validAssetUrl(release.url)) { "更新地址无效" }
         val expected = release.sha256 ?: release.checksumUrl?.let { url ->
             require(validAssetUrl(url))

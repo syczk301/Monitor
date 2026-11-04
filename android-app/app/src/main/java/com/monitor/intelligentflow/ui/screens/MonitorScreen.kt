@@ -71,6 +71,8 @@ fun MonitorScreen(
 ) {
     var stats by remember { mutableStateOf(Stats()) }
     var streamFps by remember { mutableStateOf(0.0) }
+    var streamDiagnostics by remember { mutableStateOf("正在采样，约 5 秒后显示") }
+    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     var recordingStatus by remember { mutableStateOf<RecordingStatus?>(null) }
     var connected by remember { mutableStateOf(false) }
     var isFullscreen by remember { mutableStateOf(false) }
@@ -190,6 +192,7 @@ fun MonitorScreen(
                 isFullscreen = fullscreen,
                 onToggleFullscreen = { if (fullscreen) exitFullscreen() else enterFullscreen() },
                 onStreamFps = { streamFps = it },
+                onStreamDiagnostics = { streamDiagnostics = it },
                 showFullscreenControl = fullscreen && controlsVisible,
                 onVideoTap = { controlsVisible = !controlsVisible },
                 modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
@@ -304,6 +307,23 @@ fun MonitorScreen(
                         if (recordingActive) "●" else "—",
                         if (recordingActive) MaterialTheme.colorScheme.tertiary
                         else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    if (showDiagnostics) "收起播放诊断" else "查看播放诊断",
+                    modifier = Modifier.clickable { showDiagnostics = !showDiagnostics }
+                        .padding(vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge
+                )
+                if (showDiagnostics) {
+                    Text(
+                        streamDiagnostics + "\n服务器预览：" +
+                            (if (connected) "%.1f FPS".format(stats.fps) else "暂不可用") +
+                            "\n接收低：检查服务器与链路；接收正常、绘制低：检查手机播放。",
+                        modifier = Modifier.padding(bottom = 12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -450,9 +470,13 @@ private fun HudStat(label: String, value: String, color: Color) {
                 }
             }
         } else {
-            Text(value, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, fontSize = 22.sp)
-            Spacer(Modifier.width(7.dp))
-            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(value, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary,
+                    fontSize = 22.sp, maxLines = 1, softWrap = false)
+                Spacer(Modifier.height(4.dp))
+                Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1, softWrap = false)
+            }
         }
     }
 }
