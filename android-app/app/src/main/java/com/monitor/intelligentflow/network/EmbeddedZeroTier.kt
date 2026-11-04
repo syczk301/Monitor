@@ -200,6 +200,7 @@ internal class ConnectBridge(private val connect: (String, Int) -> TunnelConnect
             }
         }
         try {
+            client.tcpNoDelay = true
             client.soTimeout = 10000
             val header = StringBuilder()
             val input = client.getInputStream()
@@ -223,7 +224,7 @@ internal class ConnectBridge(private val connect: (String, Int) -> TunnelConnect
             client.soTimeout = 0
             workers.execute {
                 try {
-                    val bytes = ByteArray(16384)
+                    val bytes = ByteArray(65536)
                     while (true) {
                         val count = input.read(bytes)
                         if (count < 0) break
@@ -233,7 +234,7 @@ internal class ConnectBridge(private val connect: (String, Int) -> TunnelConnect
                 } catch (_: Exception) { }
                 finally { closeConnections() }
             }
-            val bytes = ByteArray(16384)
+            val bytes = ByteArray(65536)
             while (true) {
                 val count = peer.read(bytes)
                 if (count < 0) break

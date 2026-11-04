@@ -358,7 +358,7 @@ private fun MonitorApp(vm: MainViewModel) {
                             }
                             Spacer(Modifier.size(9.dp))
                             Text(
-                                text = "SYNC NET",
+                                text = "实时监控",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onBackground,

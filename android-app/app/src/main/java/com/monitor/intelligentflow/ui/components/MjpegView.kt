@@ -4,6 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
+import android.view.Choreographer
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -60,7 +64,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
 import java.io.EOFException
@@ -82,9 +85,12 @@ fun MjpegView(
     onToggleFullscreen: () -> Unit = {},
     onStreamFps: (Double) -> Unit = {},
     showFullscreenControl: Boolean = true,
+    onVideoTap: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var currentFrame by remember { mutableStateOf<Bitmap?>(null) }
+    var frameSize by remember { mutableStateOf<IntSize?>(null) }
+    val renderedFrames = remember { AtomicInteger() }
     var error by remember { mutableStateOf<String?>(null) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -96,9 +102,11 @@ fun MjpegView(
     var containerH by remember { mutableIntStateOf(0) }
     var gestureVersion by remember { mutableIntStateOf(0) }
     val streamFpsCallback = rememberUpdatedState(onStreamFps)
+    val videoTapCallback = rememberUpdatedState(onVideoTap)
 
     LaunchedEffect(streamUrl) {
         currentFrame = null
+        frameSize = null
         enhancedFrame = null
         error = null
         scale = 1f
@@ -113,94 +121,110 @@ fun MjpegView(
 
     DisposableEffect(streamUrl, authHeader) {
         val running = AtomicBoolean(true)
-        val latestFrame = AtomicReference<ByteArray?>(null)
+        // Keep just one encoded and one decoded frame. A slow UI never builds a queue.
+        val latestFrame = LinkedBlockingQueue<ByteArray>(1)
+        val pendingBitmap = AtomicReference<Bitmap?>(null)
+        val uiPending = AtomicBoolean(false)
+        val receivedFrames = AtomicInteger()
+        val decodedFrames = AtomicInteger()
+        val receivedBytes = AtomicLong()
+        val decodeNanos = AtomicLong()
+        val decodeFailures = AtomicInteger()
         val activeCall = AtomicReference<okhttp3.Call?>(null)
         val mainHandler = Handler(Looper.getMainLooper())
+        val choreographer = Choreographer.getInstance()
+        val publishFrame = Choreographer.FrameCallback {
+            uiPending.set(false)
+            if (running.get()) pendingBitmap.getAndSet(null)?.let { bmp ->
+                frameSize = IntSize(bmp.width, bmp.height)
+                currentFrame = bmp
+                error = null
+            }
+        }
+        var sampledAt = System.nanoTime()
+        var diagnosticAt = sampledAt
+        var diagnosticRendered = 0
+        renderedFrames.set(0)
+        val reportFps = object : Runnable {
+            override fun run() {
+                if (!running.get()) return
+                val now = System.nanoTime()
+                val rendered = renderedFrames.getAndSet(0)
+                streamFpsCallback.value(rendered * 1_000_000_000.0 / (now-sampledAt))
+                diagnosticRendered += rendered
+                if (now - diagnosticAt >= 5_000_000_000L) {
+                    val seconds = (now - diagnosticAt) / 1_000_000_000.0
+                    val decoded = decodedFrames.getAndSet(0)
+                    val failures = decodeFailures.getAndSet(0)
+                    val decodeMs = decodeNanos.getAndSet(0) / 1_000_000.0 / (decoded + failures).coerceAtLeast(1)
+                    android.util.Log.d("MjpegPreview", "receivedFps=${receivedFrames.getAndSet(0) / seconds} decodedFps=${decoded / seconds} renderedFps=${diagnosticRendered / seconds} receivedMbps=${receivedBytes.getAndSet(0) * 8 / seconds / 1_000_000} decodeMs=$decodeMs decodeFailures=$failures")
+                    diagnosticAt = now
+                    diagnosticRendered = 0
+                }
+                sampledAt = now
+                mainHandler.postDelayed(this, 1000)
+            }
+        }
+        mainHandler.postDelayed(reportFps, 1000)
         val decoderThread = Thread {
-            var decodedFrames = 0
-            var sampleStartedNs = System.nanoTime()
             while (running.get()) {
-                val data = latestFrame.getAndSet(null)
-                if (data == null) {
-                    try { Thread.sleep(4) } catch (_: InterruptedException) { break }
-                    continue
-                }
+                val data = try { latestFrame.take() } catch (_: InterruptedException) { break }
+                val decodeStarted = System.nanoTime()
                 val bmp = BitmapFactory.decodeByteArray(data, 0, data.size)
+                decodeNanos.addAndGet(System.nanoTime() - decodeStarted)
+                if (bmp == null) decodeFailures.incrementAndGet() else decodedFrames.incrementAndGet()
                 if (bmp != null && running.get()) {
-                    decodedFrames++
-                    val nowNs = System.nanoTime()
-                    val elapsedNs = nowNs - sampleStartedNs
-                    if (elapsedNs >= 1_000_000_000L) {
-                        val measuredFps = decodedFrames * 1_000_000_000.0 / elapsedNs
-                        decodedFrames = 0
-                        sampleStartedNs = nowNs
-                        mainHandler.post {
-                            if (running.get()) streamFpsCallback.value(measuredFps)
-                        }
+                    // Only recycle frames that were never handed to Compose/RenderThread.
+                    pendingBitmap.getAndSet(bmp)?.recycle()
+                    if (uiPending.compareAndSet(false, true)) mainHandler.post {
+                        if (running.get()) choreographer.postFrameCallback(publishFrame)
                     }
-                    mainHandler.post {
-                        if (running.get()) currentFrame = bmp
-                    }
-                }
+                } else bmp?.recycle()
             }
         }.apply { isDaemon = true; name = "mjpeg-bitmap-decoder"; start() }
 
         val networkThread = Thread {
             val client = com.monitor.intelligentflow.network.EmbeddedTransport.clientBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(0, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
                 .build()
-
-            while (running.get()) {
-                try {
-                    val reqBuilder = Request.Builder().url(streamUrl)
-                    authHeader?.let { reqBuilder.header("Authorization", it) }
-                    val call = client.newCall(reqBuilder.build())
-                    activeCall.set(call)
-                    val response = call.execute()
-
-                    if (!response.isSuccessful) {
-                        mainHandler.post {
-                            if (running.get()) error = "HTTP ${response.code}"
-                        }
-                        response.close()
-                        Thread.sleep(2000)
-                        continue
-                    }
-
-                    mainHandler.post {
-                        if (running.get()) error = null
-                    }
-                    val body = response.body ?: continue
-                    val input = BufferedInputStream(body.byteStream(), 64 * 1024)
-                    while (running.get()) {
-                        val data = readMjpegFrame(input) ?: break
-                        latestFrame.set(data)
-                    }
-                    response.close()
-                } catch (e: Exception) {
-                    if (running.get()) {
-                        mainHandler.post {
-                            if (running.get()) {
-                                error = e.message
-                                streamFpsCallback.value(0.0)
+            try {
+                while (running.get()) {
+                    try {
+                        val req = Request.Builder().url(streamUrl)
+                        authHeader?.let { req.header("Authorization", it) }
+                        val call = client.newCall(req.build())
+                        activeCall.set(call)
+                        call.execute().use { response ->
+                            check(response.isSuccessful) { "HTTP ${response.code}" }
+                            val body = response.body ?: throw EOFException("视频流为空")
+                            val input = BufferedInputStream(body.byteStream(), 64 * 1024)
+                            while (running.get()) {
+                                val data = readMjpegFrame(input) ?: throw EOFException("视频流已结束")
+                                receivedFrames.incrementAndGet()
+                                receivedBytes.addAndGet(data.size.toLong())
+                                if (!latestFrame.offer(data)) { latestFrame.poll(); latestFrame.offer(data) }
                             }
                         }
-                        try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
-                    }
-                } finally {
-                    activeCall.getAndSet(null)?.cancel()
+                    } catch (e: Exception) {
+                        if (running.get()) {
+                            mainHandler.post { if (running.get()) error = e.message }
+                            try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
+                        }
+                    } finally { activeCall.getAndSet(null)?.cancel() }
                 }
-            }
+            } finally { client.connectionPool.evictAll() }
         }.apply { isDaemon = true; name = "mjpeg-network-reader"; start() }
 
         onDispose {
             running.set(false)
             activeCall.getAndSet(null)?.cancel()
-            latestFrame.set(null)
+            latestFrame.clear()
+            pendingBitmap.set(null)
             networkThread.interrupt()
             decoderThread.interrupt()
             mainHandler.removeCallbacksAndMessages(null)
+            choreographer.removeFrameCallback(publishFrame)
         }
     }
 
@@ -248,11 +272,11 @@ fun MjpegView(
         },
         contentAlignment = Alignment.Center
     ) {
-        val frame = currentFrame
+        val dimensions = frameSize
 
-        AnimatedVisibility(visible = frame != null, enter = fadeIn(), exit = fadeOut()) {
-            if (frame != null) {
-                val frameAspectRatio = frame.width.toFloat() / frame.height.toFloat()
+        AnimatedVisibility(visible = dimensions != null, enter = fadeIn(), exit = fadeOut()) {
+            if (dimensions != null) {
+                val frameAspectRatio = dimensions.width.toFloat() / dimensions.height.toFloat()
                 Box(
                     modifier = Modifier
                         .then(if (isFullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(frameAspectRatio))
@@ -277,6 +301,7 @@ fun MjpegView(
                         }
                         .pointerInput(Unit) {
                             detectTapGestures(
+                                onTap = { videoTapCallback.value() },
                                 onDoubleTap = {
                                     if (scale > 1.1f) {
                                         scale = 1f
@@ -291,7 +316,8 @@ fun MjpegView(
                         }
                 ) {
                     BitmapViewport(
-                        bitmap = frame,
+                        bitmap = { currentFrame },
+                        onFrameRendered = { renderedFrames.incrementAndGet() },
                         scale = scale,
                         offset = offset,
                         isFullscreen = isFullscreen,
@@ -312,7 +338,7 @@ fun MjpegView(
             }
         }
 
-        if (frame == null) {
+        if (dimensions == null) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -390,56 +416,20 @@ fun MjpegView(
     }
 }
 
-private const val MAX_MJPEG_FRAME_BYTES = 2 * 1024 * 1024
-
-private fun readMjpegFrame(input: BufferedInputStream): ByteArray? {
-    var line: String
-    do {
-        line = readAsciiLine(input) ?: return null
-    } while (!line.startsWith("--"))
-
-    var contentLength = -1
-    while (true) {
-        line = readAsciiLine(input) ?: return null
-        if (line.isEmpty()) break
-        if (line.startsWith("Content-Length:", ignoreCase = true)) {
-            contentLength = line.substringAfter(':').trim().toIntOrNull() ?: -1
-        }
-    }
-    if (contentLength !in 1..MAX_MJPEG_FRAME_BYTES) {
-        throw IllegalStateException("无效的视频帧长度: $contentLength")
-    }
-    val frame = ByteArray(contentLength)
-    var offset = 0
-    while (offset < frame.size) {
-        val count = input.read(frame, offset, frame.size - offset)
-        if (count < 0) throw EOFException("视频流意外中断")
-        offset += count
-    }
-    return frame
-}
-
-private fun readAsciiLine(input: BufferedInputStream): String? {
-    val line = StringBuilder(64)
-    while (true) {
-        val value = input.read()
-        if (value < 0) return if (line.isEmpty()) null else line.toString()
-        if (value == '\n'.code) return line.toString().trimEnd('\r')
-        if (line.length < 4096) line.append(value.toChar())
-        else throw IllegalStateException("视频流响应头过长")
-    }
-}
-
 @Composable
 private fun BitmapViewport(
-    bitmap: Bitmap,
+    bitmap: () -> Bitmap?,
+    onFrameRendered: () -> Unit,
     scale: Float,
     offset: Offset,
     isFullscreen: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
+    val lastRendered = remember { AtomicReference<Bitmap?>(null) }
     Canvas(modifier = modifier) {
+        val bitmap = bitmap() ?: return@Canvas
+        val imageBitmap = bitmap.asImageBitmap()
+        if (lastRendered.getAndSet(bitmap) !== bitmap) onFrameRendered()
         val bw = bitmap.width.toFloat()
         val bh = bitmap.height.toFloat()
         val cw = size.width

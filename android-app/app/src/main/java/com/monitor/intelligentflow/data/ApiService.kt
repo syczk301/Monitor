@@ -25,7 +25,9 @@ class MonitorApiService(
 
     fun close() {
         client.dispatcher.cancelAll()
-        client.connectionPool.evictAll()
+        // Closing an idle TLS socket may write close_notify. Never do that on
+        // the UI thread when settings or the selected transport change.
+        client.dispatcher.executorService.execute { client.connectionPool.evictAll() }
     }
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()

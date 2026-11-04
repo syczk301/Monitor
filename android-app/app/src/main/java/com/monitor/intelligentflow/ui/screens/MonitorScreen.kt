@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -72,6 +74,7 @@ fun MonitorScreen(
     var recordingStatus by remember { mutableStateOf<RecordingStatus?>(null) }
     var connected by remember { mutableStateOf(false) }
     var isFullscreen by remember { mutableStateOf(false) }
+    var controlsVisible by remember { mutableStateOf(true) }
     var audioEnabled by rememberSaveable { mutableStateOf(false) }
     var audioError by remember { mutableStateOf<String?>(null) }
     var cameras by remember { mutableStateOf<List<CameraDevice>>(emptyList()) }
@@ -84,6 +87,16 @@ fun MonitorScreen(
         ?: cameras.firstOrNull { it.online }
     val selectedStreamUrl = api.streamUrl(selectedCamera)
     val selectedAudioUrl = api.audioUrl(selectedCamera)
+
+    LaunchedEffect(selectedStreamUrl, isFullscreen) {
+        controlsVisible = true
+    }
+    LaunchedEffect(controlsVisible, selectedStreamUrl, isFullscreen, audioEnabled) {
+        if (controlsVisible) {
+            delay(3_000)
+            controlsVisible = false
+        }
+    }
     val audioPlayer = remember(api) {
         PcmAudioPlayer { message ->
             audioError = message
@@ -177,7 +190,8 @@ fun MonitorScreen(
                 isFullscreen = fullscreen,
                 onToggleFullscreen = { if (fullscreen) exitFullscreen() else enterFullscreen() },
                 onStreamFps = { streamFps = it },
-                showFullscreenControl = fullscreen,
+                showFullscreenControl = fullscreen && controlsVisible,
+                onVideoTap = { controlsVisible = !controlsVisible },
                 modifier = if (fullscreen) Modifier.fillMaxSize() else Modifier.fillMaxWidth()
             )
         }
@@ -225,36 +239,42 @@ fun MonitorScreen(
                         .background(Color.Black)
                 ) {
                     mjpegContent(selectedStreamUrl, false)
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .height(46.dp)
-                            .background(Color.Black.copy(alpha = 0.72f))
-                            .padding(horizontal = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = controlsVisible,
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                        enter = fadeIn(),
+                        exit = fadeOut()
                     ) {
-                        IconButton(onClick = { enterFullscreen() }, modifier = Modifier.size(40.dp)) {
-                            Icon(Icons.Rounded.Fullscreen, "全屏", tint = Color.White, modifier = Modifier.size(22.dp))
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            StatusDot(if (connected) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
-                            Spacer(Modifier.width(7.dp))
-                            Text(
-                                if (connected) "直播中" else "连接中",
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        IconButton(onClick = { audioEnabled = !audioEnabled }, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                if (audioEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff,
-                                if (audioEnabled) "关闭声音" else "开启声音",
-                                tint = Color.White,
-                                modifier = Modifier.size(21.dp)
-                            )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .background(Color.Black.copy(alpha = 0.72f))
+                                .padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            IconButton(onClick = { enterFullscreen() }, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Rounded.Fullscreen, "全屏", tint = Color.White, modifier = Modifier.size(22.dp))
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                StatusDot(if (streamFps > 0.0) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error)
+                                Spacer(Modifier.width(7.dp))
+                                Text(
+                                    if (streamFps > 0.0) "直播中" else "连接中",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            IconButton(onClick = { audioEnabled = !audioEnabled }, modifier = Modifier.size(40.dp)) {
+                                Icon(
+                                    if (audioEnabled) Icons.Rounded.VolumeUp else Icons.Rounded.VolumeOff,
+                                    if (audioEnabled) "关闭声音" else "开启声音",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -273,8 +293,7 @@ fun MonitorScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val displayedFps = streamFps.takeIf { it > 0.0 } ?: stats.fps
-                    HudStat("FPS", "%.1f".format(displayedFps), MaterialTheme.colorScheme.onSurface)
+                    HudStat("FPS", "%.1f".format(streamFps), MaterialTheme.colorScheme.onSurface)
                     HudDivider()
                     val pingText = if (connected) "${stats.avgLatencyMs.roundToInt().coerceAtLeast(1)} ms" else "—"
                     HudStat("PING", pingText, MaterialTheme.colorScheme.onSurface)
