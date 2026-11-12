@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.monitor.intelligentflow.network.NativeSocketIo
 import com.monitor.intelligentflow.network.NonBlockingTunnel
 import com.zerotier.sockets.ZeroTierNative
+import com.zerotier.sockets.ZeroTierSocketWaiter
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,6 +23,7 @@ class ZeroTierNonBlockingTest {
         assertEquals(0, ZeroTierNative.zts_set_blocking(fd, 0))
         val entered = CountDownLatch(1)
         val failure = AtomicReference<Throwable>()
+        val waiter = ZeroTierSocketWaiter(fd)
         val tunnel = NonBlockingTunnel(object : NativeSocketIo {
             override fun read(bytes: ByteArray): Int {
                 val count = ZeroTierNative.zts_bsd_read(fd, bytes)
@@ -30,6 +32,7 @@ class ZeroTierNonBlockingTest {
             }
             override fun write(bytes: ByteArray, offset: Int, count: Int): Int =
                 ZeroTierNative.zts_bsd_write_offset(fd, bytes, offset, count)
+            override fun awaitReady(write: Boolean, timeoutMillis: Int): Int = waiter.awaitReady(write, timeoutMillis)
             override fun close() { assertEquals(0, ZeroTierNative.zts_bsd_close(fd)) }
         })
         val reader = Thread { try { tunnel.read(ByteArray(65_536)) } catch (error: Throwable) { failure.set(error) } }
@@ -48,4 +51,22 @@ class ZeroTierNonBlockingTest {
         }
     }
 
+    @Test fun nativeReadinessDistinguishesIdleTimeoutAndWritable() {
+        ZeroTierJniTest.ensureStack()
+        val fd = ZeroTierNative.zts_bsd_socket(ZeroTierNative.ZTS_AF_INET, ZeroTierNative.ZTS_SOCK_DGRAM, 0)
+        assertTrue(fd >= 0)
+        val waiter = ZeroTierSocketWaiter(fd)
+        try {
+            assertEquals(0, ZeroTierNative.zts_bind(fd, "0.0.0.0", 0))
+            val start = System.nanoTime()
+            assertEquals(0, waiter.awaitReady(false, 60))
+            val elapsedMs = (System.nanoTime() - start) / 1_000_000
+            assertTrue("idle select returned too early: $elapsedMs ms", elapsedMs >= 40)
+            assertTrue("idle select failed to time out: $elapsedMs ms", elapsedMs < 1_000)
+            assertEquals(1, waiter.awaitReady(true, 60))
+        } finally { assertEquals(0, ZeroTierNative.zts_bsd_close(fd)) }
+        // Pinned lwIP select scans allocated descriptor slots even after close;
+        // it is not an fd-lifetime validator. NonBlockingTunnel's closed flag
+        // and serialized close prevent all subsequent native operations.
+    }
 }

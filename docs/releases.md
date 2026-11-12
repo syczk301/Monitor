@@ -18,7 +18,7 @@ Windows 更新器读取 `releases/latest`，从标签解析版本并下载固定
 
 ## Android 独立修复版
 
-仅修复 Android、且发布范围已明确为 Android 时，沿用 4.9.8、4.9.10 的独立发布方式：标题为 `Camera Monitor Android X.Y.Z`，上传原签名 APK 及 SHA-256，正式发布但设置 `make_latest=false`。Windows 的 Latest 与版本保持不变，Android 更新器仍可从正式发布列表识别新 APK。发布说明必须列明验证范围，模拟器结果不能描述为问题手机已经恢复。4.9.11 属于此类发布。
+仅修复 Android、且发布范围已明确为 Android 时，沿用 4.9.8、4.9.10 的独立发布方式：标题为 `Camera Monitor Android X.Y.Z`，上传原签名 APK 及 SHA-256，正式发布但设置 `make_latest=false`。Windows 的 Latest 与版本保持不变，Android 更新器仍可从正式发布列表识别新 APK。发布说明必须列明验证范围，模拟器结果不能描述为问题手机已经恢复。4.9.11、4.9.12 属于此类发布。
 
 ## 版本标签与历史记录
 

@@ -4,6 +4,7 @@ import android.content.Context
 import com.zerotier.sockets.ZeroTierNative
 import com.zerotier.sockets.ZeroTierNode
 import com.zerotier.sockets.ZeroTierSocket
+import com.zerotier.sockets.ZeroTierSocketWaiter
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -156,6 +157,7 @@ internal interface TunnelConnection : AutoCloseable {
 }
 
 private class NativeTunnel(private val socket: ZeroTierSocket) : TunnelConnection {
+    private val waiter = ZeroTierSocketWaiter(socket.nativeFileDescriptor)
     init {
         val result = ZeroTierNative.zts_set_blocking(socket.nativeFileDescriptor, 0)
         if (result != 0) throw IOException("ZeroTier nonblocking mode failed ($result)")
@@ -165,6 +167,7 @@ private class NativeTunnel(private val socket: ZeroTierSocket) : TunnelConnectio
             ZeroTierNative.zts_bsd_read(socket.nativeFileDescriptor, bytes)
         override fun write(bytes: ByteArray, offset: Int, count: Int): Int =
             ZeroTierNative.zts_bsd_write_offset(socket.nativeFileDescriptor, bytes, offset, count)
+        override fun awaitReady(write: Boolean, timeoutMillis: Int): Int = waiter.awaitReady(write, timeoutMillis)
         override fun close() = socket.close()
     })
     override fun read(bytes: ByteArray): Int = delegate.read(bytes)

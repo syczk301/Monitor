@@ -1,8 +1,15 @@
-# Android 监控客户端 4.9.11
+# Android 监控客户端 4.9.12
 
 Kotlin + Jetpack Compose 原生客户端，提供实时监控、PCM 音频、录像和记录浏览。所有服务器请求使用 HTTPS 与项目 CA，保留证书验证。
 
-[下载 4.9.11 APK](https://github.com/syczk301/Monitor/releases/download/4.9.11/monitor-4.9.11-release.apk) · [发布说明](https://github.com/syczk301/Monitor/releases/tag/4.9.11)
+[下载 4.9.12 APK](https://github.com/syczk301/Monitor/releases/download/4.9.12/monitor-4.9.12-release.apk) · [发布说明](https://github.com/syczk301/Monitor/releases/tag/4.9.12)
+
+## 4.9.12 ZeroTier 接收等待修复
+
+- 用原生 select 就绪等待替换无数据时固定等待 20 ms，保留同一 socket 读、写、关闭的串行保护。
+- 同版 lwIP 的 600 ms RTT 对照中，吞吐 3.82 → 14.18 Mbps，TCP 丢段 143 → 0；这不等于真机已经恢复。
+- timeout 提示细分连接、TLS 握手、等待视频响应和接收视频阶段，不延长超时或自动回退系统网络。
+- 61 项 JVM 单测、6 项 Android 原生测试及播放回归通过。问题手机的 timeout 和 Tailscale 低帧率仍待确认，见 [本轮排查记录](docs/embedded-receive-4912.md)。
 
 ## 4.9.11 内置网络原生接口修复
 

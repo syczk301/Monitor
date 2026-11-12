@@ -235,14 +235,13 @@ fun MjpegView(
         }.apply { isDaemon = true; name = "mjpeg-bitmap-decoder"; start() }
 
         val networkThread = Thread {
+            val connectionEvents = com.monitor.intelligentflow.network.VideoConnectionEvents { connection ->
+                tunnelProbe.set(com.monitor.intelligentflow.network.TunnelDiagnostics.find(connection.socket().localPort))
+            }
             val client = com.monitor.intelligentflow.network.EmbeddedTransport.streamClientBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(10, TimeUnit.SECONDS)
-                .eventListener(object : okhttp3.EventListener() {
-                    override fun connectionAcquired(call: okhttp3.Call, connection: okhttp3.Connection) {
-                        tunnelProbe.set(com.monitor.intelligentflow.network.TunnelDiagnostics.find(connection.socket().localPort))
-                    }
-                })
+                .eventListener(connectionEvents)
                 .build()
             try {
                 while (running.get()) {
@@ -250,6 +249,8 @@ fun MjpegView(
                         val req = Request.Builder().url(streamUrl)
                         authHeader?.let { req.header("Authorization", it) }
                         val call = client.newCall(req.build())
+                        tunnelProbe.set(null)
+                        streamProtocol.set("连接中")
                         connectionAttempts.incrementAndGet()
                         activeCall.set(call)
                         call.execute().use { response ->
@@ -267,8 +268,9 @@ fun MjpegView(
                     } catch (e: Exception) {
                         if (running.get()) {
                             // Keep diagnostics free of hostnames, URLs and credentials.
-                            lastStreamError.set(e.javaClass.simpleName)
-                            mainHandler.post { if (running.get()) error = e.message }
+                            lastStreamError.set(connectionEvents.failureSummary(e))
+                            val message = connectionEvents.timeoutMessage(e) ?: e.message
+                            mainHandler.post { if (running.get()) error = message }
                             try { Thread.sleep(2000) } catch (_: InterruptedException) { break }
                         }
                     } finally { activeCall.getAndSet(null)?.cancel() }

@@ -4,16 +4,16 @@ Camera Monitor is a native Windows monitoring and continuous-recording applicati
 
 The companion Android app provides live video, audio and recording access, with embedded ZeroTier and Tailscale connections.
 
-## Download — Windows 4.9.7 / Android 4.9.11
+## Download — Windows 4.9.7 / Android 4.9.12
 
-The current Windows installer is on the [latest unified release](https://github.com/syczk301/Monitor/releases/latest). The Android native-network fix is on the [4.9.11 release page](https://github.com/syczk301/Monitor/releases/tag/4.9.11).
+The current Windows installer is on the [latest unified release](https://github.com/syczk301/Monitor/releases/latest). The Android native-network fix is on the [4.9.12 release page](https://github.com/syczk301/Monitor/releases/tag/4.9.12).
 
 | Platform | Download | Update from an installed version |
 | --- | --- | --- |
 | Windows x64 | [MSI installer](https://github.com/syczk301/Monitor/releases/download/4.9.7/CameraMonitor-4.9.7-x64.msi) | Tray menu → Check for updates |
-| Android | [APK](https://github.com/syczk301/Monitor/releases/download/4.9.11/monitor-4.9.11-release.apk) | Settings → Check for updates |
+| Android | [APK](https://github.com/syczk301/Monitor/releases/download/4.9.12/monitor-4.9.12-release.apk) | Settings → Check for updates |
 
-Windows remains at **4.9.7**. Android **4.9.11** repairs embedded ZeroTier JNI/socket handling and Tailscale physical-network binding, with expanded receive-path diagnostics. The problem phone's FPS still needs verification; emulator results do not establish remote overlay performance. EXE and APK SHA-256 attachments support their respective automatic updaters.
+Windows remains at **4.9.7**. Android **4.9.12** replaces embedded ZeroTier fixed receive polling with readiness notifications and adds timeout-stage diagnostics. The problem phone's FPS still needs verification; emulator results do not establish remote overlay performance. EXE and APK SHA-256 attachments support their respective automatic updaters.
 
 Version 4.9.7 learns the computer's ZeroTier and Tailscale server addresses and selects the matching address when switching networks. Upgrade both clients, then connect through one working address to learn the other route. See [setup and manual override](android-app/docs/adaptive-network-addresses.md).
 
