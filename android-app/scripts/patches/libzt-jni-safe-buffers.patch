@@ -1,0 +1,384 @@
+--- a/src/bindings/java/JavaSockets.cxx
++++ b/src/bindings/java/JavaSockets.cxx
+@@ -27,8 +27,55 @@
+ #include "lwip/stats.h"
+ 
+ #include <jni.h>
++#include <cerrno>
++#include <memory>
++#include <new>
+ 
+ extern int zts_errno;
++
++// lwIP also updates the Android thread-local errno. zts_errno is global and
++// another socket can overwrite it between the operation and JNI's return.
++static int socket_result(int retval, int native_errno)
++{
++    if (retval >= 0 || retval < ZTS_ERR_SOCKET) return retval;
++    return native_errno != 0 ? -native_errno : ZTS_ERR_SOCKET;
++}
++
++
++// Never pin a Java heap array while blocking in the network stack. Idle
++// keep-alive reads can otherwise hold a JNI critical region indefinitely.
++static bool checked_array_range(JNIEnv* env, jbyteArray buf, jint offset, jint len)
++{
++    if (buf == nullptr) {
++        env->ThrowNew(env->FindClass("java/lang/NullPointerException"), "buffer");
++        return false;
++    }
++    const jsize size = env->GetArrayLength(buf);
++    if (offset < 0 || len < 0 || offset > size || len > size - offset) {
++        env->ThrowNew(env->FindClass("java/lang/IndexOutOfBoundsException"), "buffer range");
++        return false;
++    }
++    return !env->ExceptionCheck();
++}
++
++static std::unique_ptr<jbyte[]> socket_buffer(JNIEnv* env, jint len)
++{
++    std::unique_ptr<jbyte[]> data(new (std::nothrow) jbyte[len > 0 ? len : 1]);
++    if (!data) {
++        env->ThrowNew(env->FindClass("java/lang/OutOfMemoryError"), "native socket buffer");
++    }
++    return data;
++}
++
++static jint array_length(JNIEnv* env, jbyteArray buf)
++{
++    if (buf == nullptr) {
++        env->ThrowNew(env->FindClass("java/lang/NullPointerException"), "buffer");
++        return -1;
++    }
++    return env->GetArrayLength(buf);
++}
++
+ 
+ namespace ZeroTier {
+ 
+@@ -67,14 +114,16 @@
+     jint protocol)
+ {
+     int retval = zts_bsd_socket(family, type, protocol);
+-    return retval > -1 ? retval : -(zts_errno);   // Encode lwIP errno into return value for JNI functions only
++    const int saved_errno = errno;
++    return socket_result(retval, saved_errno);   // Encode lwIP errno into return value for JNI functions only
+ }
+ 
+ JNIEXPORT jint JNICALL
+ Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1listen(JNIEnv* env, jclass clazz, jint fd, int backlog)
+ {
+     int retval = zts_bsd_listen(fd, backlog);
+-    return retval > -1 ? retval : -(zts_errno);
++    const int saved_errno = errno;
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1accept(
+@@ -86,8 +135,9 @@
+     struct zts_sockaddr_storage ss;
+     zts_socklen_t addrlen = sizeof(struct zts_sockaddr_storage);
+     int retval = zts_bsd_accept(fd, (zts_sockaddr*)&ss, &addrlen);
++    const int saved_errno = errno;
+     ss2zta(env, &ss, addr);
+-    return retval > -1 ? retval : -(zts_errno);
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jboolean JNICALL
+@@ -96,8 +146,9 @@
+     struct zts_sockaddr_storage ss;
+     zts_socklen_t addrlen = sizeof(struct zts_sockaddr_storage);
+     int retval = zts_bsd_getsockname(fd, (struct zts_sockaddr*)&ss, &addrlen);
++    const int saved_errno = errno;
+     ss2zta(env, &ss, addr);
+-    return retval > -1 ? retval : -(zts_errno);
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL
+@@ -106,8 +157,9 @@
+     struct zts_sockaddr_storage ss;
+     int retval =
+         zts_bsd_getpeername(fd, (struct zts_sockaddr*)&ss, (zts_socklen_t*)sizeof(struct zts_sockaddr_storage));
++    const int saved_errno = errno;
+     ss2zta(env, &ss, addr);
+-    return retval > -1 ? retval : -(zts_errno);
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1close(JNIEnv* env, jclass clazz, jint fd)
+@@ -145,6 +197,7 @@
+         ztfdset2fdset(env, nfds, exceptfds, &_exceptfds);
+     }
+     int retval = zts_bsd_select(nfds, r, w, e, &_timeout);
++    const int saved_errno = errno;
+     if (readfds) {
+         fdset2ztfdset(env, nfds, &_readfds, readfds);
+     }
+@@ -154,14 +207,15 @@
+     if (exceptfds) {
+         fdset2ztfdset(env, nfds, &_exceptfds, exceptfds);
+     }
+-    return retval > -1 ? retval : -(zts_errno);
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL
+ Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1fcntl(JNIEnv* env, jclass clazz, jint fd, jint cmd, jint flags)
+ {
+     int retval = zts_bsd_fcntl(fd, cmd, flags);
+-    return retval > -1 ? retval : -(zts_errno);
++    const int saved_errno = errno;
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT int JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1ioctl(
+@@ -172,9 +226,11 @@
+     jobject argp)
+ {
+     int retval = ZTS_ERR_OK;
++    int saved_errno = 0;
+     if (request == FIONREAD) {
+         int bytesRemaining = 0;
+         retval = zts_bsd_ioctl(fd, request, &bytesRemaining);
++        saved_errno = errno;
+         // set value in general object
+         jclass c = env->GetObjectClass(argp);
+         if (! c) {
+@@ -187,141 +243,133 @@
+         // TODO: double check
+         int meaninglessVariable = 0;
+         retval = zts_bsd_ioctl(fd, request, &meaninglessVariable);
+-    }
+-    return retval > -1 ? retval : -(zts_errno);
++        saved_errno = errno;
++    }
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1send(
+-    JNIEnv* env,
+-    jclass clazz,
+-    jint fd,
+-    jbyteArray buf,
+-    int flags)
+-{
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    int retval = zts_bsd_send(fd, data, env->GetArrayLength(buf), flags);
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
++    JNIEnv* env, jclass clazz, jint fd, jbyteArray buf, jint flags)
++{
++    const jint len = array_length(env, buf);
++    if (len < 0) return ZTS_ERR_ARG;
++    auto data = socket_buffer(env, len);
++    if (!data) return ZTS_ERR_ARG;
++    env->GetByteArrayRegion(buf, 0, len, data.get());
++    if (env->ExceptionCheck()) return ZTS_ERR_ARG;
++    const int retval = zts_bsd_send(fd, data.get(), len, flags);
++    const int saved_errno = errno;
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1sendto(
+-    JNIEnv* env,
+-    jclass clazz,
+-    jint fd,
+-    jbyteArray buf,
+-    jint flags,
+-    jobject addr)
+-{
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    struct zts_sockaddr_storage ss;
++    JNIEnv* env, jclass clazz, jint fd, jbyteArray buf, jint flags, jobject addr)
++{
++    const jint len = array_length(env, buf);
++    if (len < 0) return ZTS_ERR_ARG;
++    struct zts_sockaddr_storage ss = {};
+     zta2ss(env, &ss, addr);
+-    zts_socklen_t addrlen =
++    if (env->ExceptionCheck()) return ZTS_ERR_ARG;
++    const zts_socklen_t addrlen =
+         ss.ss_family == ZTS_AF_INET ? sizeof(struct zts_sockaddr_in) : sizeof(struct zts_sockaddr_in6);
+-    int retval = zts_bsd_sendto(fd, data, env->GetArrayLength(buf), flags, (struct zts_sockaddr*)&ss, addrlen);
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
++    auto data = socket_buffer(env, len);
++    if (!data) return ZTS_ERR_ARG;
++    env->GetByteArrayRegion(buf, 0, len, data.get());
++    if (env->ExceptionCheck()) return ZTS_ERR_ARG;
++    const int retval = zts_bsd_sendto(fd, data.get(), len, flags, (struct zts_sockaddr*)&ss, addrlen);
++    const int saved_errno = errno;
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1recv(
+-    JNIEnv* env,
+-    jclass clazz,
+-    jint fd,
+-    jbyteArray buf,
+-    jint flags)
+-{
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    int retval = zts_bsd_recv(fd, data, env->GetArrayLength(buf), flags);
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
++    JNIEnv* env, jclass clazz, jint fd, jbyteArray buf, jint flags)
++{
++    const jint len = array_length(env, buf);
++    if (len < 0) return ZTS_ERR_ARG;
++    auto data = socket_buffer(env, len);
++    if (!data) return ZTS_ERR_ARG;
++    const int retval = zts_bsd_recv(fd, data.get(), len, flags);
++    const int saved_errno = errno;
++    const int result = socket_result(retval, saved_errno);
++    if (retval > 0) env->SetByteArrayRegion(buf, 0, retval, data.get());
++    return result;
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1recvfrom(
+-    JNIEnv* env,
+-    jclass clazz,
+-    jint fd,
+-    jbyteArray buf,
+-    jint flags,
+-    jobject addr)
+-{
+-    zts_socklen_t addrlen = sizeof(struct zts_sockaddr_storage);
+-    struct zts_sockaddr_storage ss;
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    int retval = zts_bsd_recvfrom(fd, data, env->GetArrayLength(buf), flags, (struct zts_sockaddr*)&ss, &addrlen);
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    ss2zta(env, &ss, addr);
+-    return retval > -1 ? retval : -(zts_errno);
++    JNIEnv* env, jclass clazz, jint fd, jbyteArray buf, jint flags, jobject addr)
++{
++    const jint len = array_length(env, buf);
++    if (len < 0) return ZTS_ERR_ARG;
++    auto data = socket_buffer(env, len);
++    if (!data) return ZTS_ERR_ARG;
++    struct zts_sockaddr_storage ss = {};
++    zts_socklen_t addrlen = sizeof(ss);
++    const int retval = zts_bsd_recvfrom(fd, data.get(), len, flags, (struct zts_sockaddr*)&ss, &addrlen);
++    const int saved_errno = errno;
++    const int result = socket_result(retval, saved_errno);
++    if (retval >= 0) {
++        if (retval > 0) env->SetByteArrayRegion(buf, 0, retval, data.get());
++        if (!env->ExceptionCheck()) ss2zta(env, &ss, addr);
++    }
++    return result;
++}
++
++JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1read_1offset(
++    JNIEnv* env, jclass clazz, jint fd, jbyteArray buf, jint offset, jint len)
++{
++    if (!checked_array_range(env, buf, offset, len)) return ZTS_ERR_ARG;
++    if (len == 0) return 0;
++    auto data = socket_buffer(env, len);
++    if (!data) return ZTS_ERR_ARG;
++    const int retval = zts_bsd_read(fd, data.get(), len);
++    const int saved_errno = errno;
++    const int result = socket_result(retval, saved_errno);
++    if (retval > 0) env->SetByteArrayRegion(buf, offset, retval, data.get());
++    return result;
+ }
+ 
+ JNIEXPORT jint JNICALL
+ Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1read(JNIEnv* env, jclass clazz, jint fd, jbyteArray buf)
+ {
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    int retval = zts_bsd_read(fd, data, env->GetArrayLength(buf));
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
+-}
+-
+-ssize_t zts_bsd_read_offset(int fd, void* buf, size_t offset, size_t len)
+-{
+-    char* cbuf = (char*)buf;
+-    return zts_bsd_read(fd, &(cbuf[offset]), len);
+-}
+-
+-JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1read_1offset(
+-    JNIEnv* env,
+-    jclass clazz,
+-    jint fd,
+-    jbyteArray buf,
+-    jint offset,
+-    jint len)
+-{
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    int retval = zts_bsd_read_offset(fd, data, offset, len);
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
++    const jint len = array_length(env, buf);
++    if (len < 0) return ZTS_ERR_ARG;
++    return Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1read_1offset(env, clazz, fd, buf, 0, len);
+ }
+ 
+ JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1read_1length(
+-    JNIEnv* env,
+-    jclass clazz,
+-    jint fd,
+-    jbyteArray buf,
+-    jint len)
+-{
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    int retval = zts_bsd_read(fd, data, len);
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
++    JNIEnv* env, jclass clazz, jint fd, jbyteArray buf, jint len)
++{
++    return Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1read_1offset(env, clazz, fd, buf, 0, len);
++}
++
++JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1write_1offset(
++    JNIEnv* env, jclass clazz, jint fd, jbyteArray buf, jint offset, jint len)
++{
++    if (!checked_array_range(env, buf, offset, len)) return ZTS_ERR_ARG;
++    if (len == 0) return 0;
++    auto data = socket_buffer(env, len);
++    if (!data) return ZTS_ERR_ARG;
++    env->GetByteArrayRegion(buf, offset, len, data.get());
++    if (env->ExceptionCheck()) return ZTS_ERR_ARG;
++    const int retval = zts_bsd_write(fd, data.get(), len);
++    const int saved_errno = errno;
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL
+ Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1write(JNIEnv* env, jclass clazz, jint fd, jbyteArray buf)
+ {
+-    void* data = env->GetPrimitiveArrayCritical(buf, NULL);
+-    int retval = zts_bsd_write(fd, data, env->GetArrayLength(buf));
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
+-}
+-
+-JNIEXPORT jint JNICALL Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1write_1offset(
+-    JNIEnv* env,
+-    jclass clazz,
+-    jint fd,
+-    jbyteArray buf,
+-    jint offset,
+-    jint len)
+-{
+-    void* data = env->GetPrimitiveArrayCritical(&(buf[offset]), NULL);   // PENDING: check?
+-    int retval = zts_bsd_write(fd, data, len);
+-    env->ReleasePrimitiveArrayCritical(buf, data, 0);
+-    return retval > -1 ? retval : -(zts_errno);
++    const jint len = array_length(env, buf);
++    if (len < 0) return ZTS_ERR_ARG;
++    return Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1write_1offset(env, clazz, fd, buf, 0, len);
+ }
+ 
+ JNIEXPORT jint JNICALL
+ Java_com_zerotier_sockets_ZeroTierNative_zts_1bsd_1write_1byte(JNIEnv* env, jclass clazz, jint fd, jbyte buf)
+ {
+     int retval = zts_bsd_write(fd, &buf, 1);
+-    return retval > -1 ? retval : -(zts_errno);
++    const int saved_errno = errno;
++    return socket_result(retval, saved_errno);
+ }
+ 
+ JNIEXPORT jint JNICALL

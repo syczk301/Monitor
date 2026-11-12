@@ -71,6 +71,13 @@ type Node struct {
 	streams map[*Stream]bool
 }
 
+// SocketBinder binds native sockets to Android's selected physical network.
+// Go opens sockets via syscalls, which bypass Android's libc process binding.
+// The callback must not close fd or fall back to an unbound system route.
+type SocketBinder interface {
+	BindSocket(fd int) error
+}
+
 // SetInterfaces must be called before Start and whenever physical links change.
 func SetInterfaces(snapshot string) error {
 	var values []interfaceInfo
@@ -105,6 +112,13 @@ func startServer(directory, hostname, controlURL string) (*Node, error) {
 func (n *Node) NetworkChanged() {
 	if monitor, ok := n.server.Sys().NetMon.GetOK(); ok {
 		monitor.InjectEvent()
+	}
+	// Android may replace a Network while retaining the interface name and
+	// addresses. netmon cannot see its handle; recreate UDP sockets so the
+	// per-FD hook applies the newly selected Network in that case as well.
+	if magic, ok := n.server.Sys().MagicSock.GetOK(); ok {
+		magic.Rebind()
+		magic.ReSTUN("android-network-changed")
 	}
 }
 

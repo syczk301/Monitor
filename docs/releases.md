@@ -16,6 +16,10 @@ Windows 与 Android 使用相同的发行版本号，在一个正式 GitHub Rele
 
 Windows 更新器读取 `releases/latest`，从标签解析版本并下载固定名称的 EXE；Android 更新器扫描正式发布列表，从 APK 文件名选择更高版本。不得把旧 Windows EXE 放在更高版本标签下冒充新版本。
 
+## Android 独立修复版
+
+仅修复 Android、且发布范围已明确为 Android 时，沿用 4.9.8、4.9.10 的独立发布方式：标题为 `Camera Monitor Android X.Y.Z`，上传原签名 APK 及 SHA-256，正式发布但设置 `make_latest=false`。Windows 的 Latest 与版本保持不变，Android 更新器仍可从正式发布列表识别新 APK。发布说明必须列明验证范围，模拟器结果不能描述为问题手机已经恢复。4.9.11 属于此类发布。
+
 ## 版本标签与历史记录
 
 后续统一发行使用纯数字 `X.Y.Z` 标签，页面和安卓界面显示纯数字版本号。两端更新器继续兼容历史 `vX.Y.Z`。

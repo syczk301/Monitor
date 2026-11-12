@@ -9,6 +9,69 @@ import java.io.IOException
 import kotlin.concurrent.thread
 
 class ConnectBridgeTest {
+    @Test fun disconnectClosesNativeConnectionThatFinishesDialingLater() {
+        val dialEntered = java.util.concurrent.CountDownLatch(1)
+        val finishDial = java.util.concurrent.CountDownLatch(1)
+        val peerClosed = java.util.concurrent.CountDownLatch(1)
+        val closeCount = java.util.concurrent.atomic.AtomicInteger()
+        ConnectBridge { _, _ ->
+            dialEntered.countDown()
+            check(finishDial.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            object : TunnelConnection {
+                override fun read(bytes: ByteArray): Int = error("cancelled tunnel must not read")
+                override fun write(bytes: ByteArray, count: Int) = error("cancelled tunnel must not write")
+                override fun close() { closeCount.incrementAndGet(); peerClosed.countDown() }
+            }
+        }.use { bridge ->
+            val address = bridge.proxy.address() as InetSocketAddress
+            Socket(address.address, address.port).use { client ->
+                client.soTimeout = 3000
+                client.getOutputStream().write("CONNECT preview.test:443 HTTP/1.1\r\nProxy-Authorization: ${bridge.authorization}\r\n\r\n".toByteArray())
+                try {
+                    assertTrue(dialEntered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                    val probe = requireNotNull(TunnelDiagnostics.find(client.localPort))
+                    bridge.disconnect()
+                    assertEquals(-1, client.getInputStream().read())
+                    assertTrue(probe.snapshot().closed)
+                    assertNull(TunnelDiagnostics.find(client.localPort))
+                } finally { finishDial.countDown() }
+                assertTrue(peerClosed.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals(1, closeCount.get())
+            }
+        }
+    }
+
+    @Test fun disconnectUnblocksNativeReadAndKeepsItsFinalDiagnosticHandle() {
+        val readEntered = java.util.concurrent.CountDownLatch(1)
+        val peerClosed = java.util.concurrent.CountDownLatch(1)
+        ConnectBridge { _, _ ->
+            object : TunnelConnection {
+                override fun read(bytes: ByteArray): Int {
+                    readEntered.countDown()
+                    check(peerClosed.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                    return -1
+                }
+                override fun write(bytes: ByteArray, count: Int) = Unit
+                override fun close() { peerClosed.countDown() }
+            }
+        }.use { bridge ->
+            val address = bridge.proxy.address() as InetSocketAddress
+            Socket(address.address, address.port).use { client ->
+                client.soTimeout = 3000
+                client.getOutputStream().write("CONNECT preview.test:443 HTTP/1.1\r\nProxy-Authorization: ${bridge.authorization}\r\n\r\n".toByteArray())
+                assertTrue(readHeaders(client).contains("200 Connection Established"))
+                assertTrue(readEntered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                val probe = requireNotNull(TunnelDiagnostics.find(client.localPort))
+                assertEquals("native-read", probe.snapshot().stage)
+                bridge.disconnect()
+                assertTrue(peerClosed.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals(-1, client.getInputStream().read())
+                assertTrue(probe.snapshot().closed)
+                assertNull(TunnelDiagnostics.find(client.localPort))
+            }
+        }
+    }
+
     @Test fun continuousPreviewDoesNotWaitForClientWritesOrNextFrame() {
         // Model a 30 FPS preview with 64 KiB JPEGs, fragmented into 8 KiB reads.
         // No client application data is sent after CONNECT: video must remain

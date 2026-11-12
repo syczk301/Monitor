@@ -30,7 +30,10 @@ object EmbeddedTailscale {
         monitor = null
         bridge?.close()
         bridge = null
-        node?.close()
+        node?.let {
+            it.close()
+            Tsbridge.setSocketBinder(null)
+        }
         node = null
         route?.close()
         route = null
@@ -45,6 +48,7 @@ object EmbeddedTailscale {
             physical.start()
             physical.awaitAvailable()
             go.Seq.setContext(context.applicationContext)
+            Tsbridge.setSocketBinder(AndroidNetworkBinder(physical))
             updateNetworkSnapshot(context)
             val directory = File(context.noBackupFilesDir, "tailscale").apply { mkdirs() }
             val active = Tsbridge.start(directory.absolutePath, "camera-monitor-android").also { node = it }
@@ -56,7 +60,7 @@ object EmbeddedTailscale {
                 val stream = active.dial(host, port.toLong())
                 object : TunnelConnection {
                     override fun read(bytes: ByteArray): Int {
-                        val data = stream.read(bytes.size.toLong())
+                        val data = stream.read(bytes.size.toLong()) ?: return -1
                         if (data.isEmpty()) return -1
                         data.copyInto(bytes)
                         return data.size
@@ -98,6 +102,7 @@ object EmbeddedTailscale {
             bridge = null
             node?.close()
             node = null
+            Tsbridge.setSocketBinder(null)
             route?.close()
             route = null
             mutableStatus.value = NetworkStatus(true, message = "Tailscale 启动失败：${error.message}")
@@ -116,13 +121,15 @@ object EmbeddedTailscale {
             }
     }
 
-    private fun interfaceSnapshot(): String {
+    private fun interfaceSnapshot(physicalInterface: String): String {
         val result = JSONArray()
         NetworkInterface.getNetworkInterfaces()?.toList()?.sortedBy { it.index }?.forEach { nic ->
-            // Native Tailscale transport uses the process's selected physical network.
-            if (nic.name.startsWith("tun") || nic.name.startsWith("wg")) return@forEach
+            // Report only the network used by native socket binding. In
+            // particular, an idle cellular IPv6 address must not advertise
+            // IPv6 availability when the selected Wi-Fi has no IPv6 route.
+            if (!nic.isLoopback && nic.name != physicalInterface) return@forEach
             val addresses = JSONArray()
-            nic.interfaceAddresses.forEach { address ->
+            nic.interfaceAddresses.sortedBy { it.address.hostAddress }.forEach { address ->
                 val ip = address.address.hostAddress?.substringBefore('%')
                 if (ip != null) addresses.put("$ip/${address.networkPrefixLength}")
             }
@@ -133,12 +140,12 @@ object EmbeddedTailscale {
     }
 
     private fun updateNetworkSnapshot(context: Context): String {
-        val snapshot = interfaceSnapshot()
-        Tsbridge.setInterfaces(snapshot)
         val manager = context.getSystemService(ConnectivityManager::class.java)
         val network = manager.boundNetworkForProcess
         val properties = network?.let { manager.getLinkProperties(it) }
         val name = properties?.interfaceName.orEmpty()
+        val snapshot = interfaceSnapshot(name)
+        Tsbridge.setInterfaces(snapshot)
         val gateway = properties?.routes?.firstOrNull { it.isDefaultRoute && it.gateway != null }?.gateway?.hostAddress.orEmpty()
         Tsbridge.setDefaultRoute(name, gateway)
         return "$network|$name|$gateway|$snapshot"

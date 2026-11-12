@@ -92,7 +92,25 @@ try {
             Copy-Item -LiteralPath $license.FullName -Destination (Join-Path $noticeDirectory $name) -Force
         }
     }
-    Get-FileHash -LiteralPath (Join-Path $androidRoot 'app\libs\tailscale.aar') -Algorithm SHA256
+    $aarFile = Join-Path $androidRoot 'app\libs\tailscale.aar'
+    $sourceHashes = [ordered]@{}
+    foreach ($sourceFile in @('bridge.go','route_android.go','route_other.go','go.mod','go.sum')) {
+        $sourceHashes[$sourceFile] = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $ndkRevision = ((Get-Content -LiteralPath (Join-Path $env:ANDROID_NDK_HOME 'source.properties') |
+        Where-Object { $_ -match '^Pkg.Revision\s*=' }) -split '=', 2)[1].Trim()
+    $provenance = [ordered]@{
+        aar = 'tailscale.aar'
+        sha256 = (Get-FileHash -LiteralPath $aarFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        go = (& $goCommand version)
+        gomobile = $mobileVersion
+        androidNdk = $ndkRevision
+        androidApi = 26
+        abis = @($targets | ForEach-Object { $_.Abi })
+        sourceSha256 = $sourceHashes
+    }
+    [IO.File]::WriteAllText((Join-Path $androidRoot 'app\libs\tailscale-build.json'), ($provenance | ConvertTo-Json -Depth 4) + "`n")
+    Get-FileHash -LiteralPath $aarFile -Algorithm SHA256
 } finally {
     Remove-Item Env:GOOS,Env:GOARCH,Env:GOARM,Env:CC,Env:CGO_ENABLED -ErrorAction SilentlyContinue
     Pop-Location

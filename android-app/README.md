@@ -1,6 +1,16 @@
-# Android 监控客户端 4.9.10（候选修复）
+# Android 监控客户端 4.9.11
 
 Kotlin + Jetpack Compose 原生客户端，提供实时监控、PCM 音频、录像和记录浏览。所有服务器请求使用 HTTPS 与项目 CA，保留证书验证。
+
+[下载 4.9.11 APK](https://github.com/syczk301/Monitor/releases/download/4.9.11/monitor-4.9.11-release.apk) · [发布说明](https://github.com/syczk301/Monitor/releases/tag/4.9.11)
+
+## 4.9.11 内置网络原生接口修复
+
+- 修补 ZeroTier JNI 在阻塞网络读写期间持有 Java 数组临界区、偏移写错误操作 JNI 引用的问题，并重建三种架构的原生库。
+- ZeroTier 接收改用非阻塞 socket，在没有数据时等待；同一 socket 的读、写、关闭采用短锁，适配其底层 lwIP 的并发约束。
+- Tailscale 的 Go socket 逐个绑定当前物理网络，网卡快照仅提供所选接口和回环接口；网络切换后重建底层 UDP socket。
+- 播放诊断分别测量原生接收、本地转发、HTTP 字节和完整帧，显示等待阶段与连接结束原因，且只关联当前视频连接。
+- 用户反馈 4.9.10 的 HTTP/1.1 隔离仍未改善。本次修复针对查实的原生集成缺陷；问题手机的最终帧率仍需复测。测试范围与结果见 [排查记录](docs/mobile-preview-performance.md)。
 
 ## 4.9.10 内置通道候选修复
 
@@ -49,10 +59,10 @@ cd android-app
 
 `app/libs/libzt.aar` 来自官方固定源码，包含 ARM64、ARMv7、x86_64，以 NDK r28c 构建并按 16 KB 页对齐。来源和重建步骤见 `app/libs/README.md`，第三方许可随 APK 附在 `assets/third-party/`。
 
-`app/libs/tailscale.aar` 使用固定的 Tailscale 1.104.2 和 Go mobile 版本，包含相同三个架构。Go 源码和依赖锁定位于 `tailscale/`；使用 Go 1.27.3、JDK 17、Android SDK 35 和 NDK r30 重建：
+`app/libs/tailscale.aar` 使用固定的 Tailscale 1.104.2 和 Go mobile 版本，包含相同三个架构。Go 源码和依赖锁定位于 `tailscale/`；本次使用 Go 1.27.3、JDK 17、Android SDK 35 和 NDK r28c 重建：
 
 ```powershell
-.\scripts\Build-TailscaleSdk.ps1 -NdkDirectory '路径\android-ndk-r30' -GoExecutable '路径\go.exe'
+.\scripts\Build-TailscaleSdk.ps1 -NdkDirectory '路径\android-ndk-r28c' -GoExecutable '路径\go.exe'
 ```
 
 该脚本使用官方 gobind 生成 JNI，通过 Go/NDK 编译原生库并打包 AAR，附带依赖许可证。Android 网络接口由 Java API 提供给 Tailscale netmon，避免应用权限下 Go netlink 枚举失败。

@@ -13,8 +13,6 @@ import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import java.io.IOException
 import java.net.*
-import java.util.concurrent.Executors
-import java.util.concurrent.Semaphore
 
 data class NetworkStatus(val enabled: Boolean = false, val ready: Boolean = false,
     val nodeId: String = "", val message: String = "使用系统网络", val authUrl: String = "")
@@ -158,97 +156,18 @@ internal interface TunnelConnection : AutoCloseable {
 }
 
 private class NativeTunnel(private val socket: ZeroTierSocket) : TunnelConnection {
-    override fun read(bytes: ByteArray): Int {
-        val count = ZeroTierNative.zts_bsd_read(socket.nativeFileDescriptor, bytes)
-        if (count < 0) throw IOException("ZeroTier receive failed ($count)")
-        return if (count == 0) -1 else count
-    }
-    override fun write(bytes: ByteArray, count: Int) {
-        var offset = 0
-        while (offset < count) {
-            val sent = ZeroTierNative.zts_bsd_write_offset(socket.nativeFileDescriptor, bytes, offset, count - offset)
-            if (sent <= 0) throw IOException("ZeroTier send failed ($sent)")
-            offset += sent
-        }
-    }
-    override fun close() = socket.close()
-}
-
-internal class ConnectBridge(private val connect: (String, Int) -> TunnelConnection) : AutoCloseable {
-    val authorization = okhttp3.Credentials.basic("monitor", java.util.UUID.randomUUID().toString())
-    private val server = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
-    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", server.localPort))
-    private val slots = Semaphore(16)
-    private val clients = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
-    private val workers = Executors.newCachedThreadPool { task -> Thread(task, "zerotier-tunnel").apply { isDaemon = true } }
     init {
-        workers.execute {
-            while (!server.isClosed) {
-                val client = try { server.accept() } catch (_: IOException) { break }
-                if (!slots.tryAcquire()) { client.close(); continue }
-                clients.add(client)
-                workers.execute { relay(client) }
-            }
-        }
+        val result = ZeroTierNative.zts_set_blocking(socket.nativeFileDescriptor, 0)
+        if (result != 0) throw IOException("ZeroTier nonblocking mode failed ($result)")
     }
-    fun disconnect() { clients.forEach { runCatching { it.close() } } }
-    override fun close() { server.close(); disconnect(); workers.shutdownNow() }
-    private fun relay(client: Socket) {
-        var remote: TunnelConnection? = null
-        val closed = java.util.concurrent.atomic.AtomicBoolean()
-        fun closeConnections() {
-            if (closed.compareAndSet(false, true)) {
-                remote?.let { runCatching { it.close() } }
-                runCatching { client.close() }
-            }
-        }
-        try {
-            client.tcpNoDelay = true
-            client.soTimeout = 10000
-            val header = StringBuilder()
-            val input = client.getInputStream()
-            while (!header.endsWith("\r\n\r\n")) {
-                val byte = input.read()
-                if (byte < 0 || header.length >= 8192) throw IOException("Invalid proxy request")
-                header.append(byte.toChar())
-            }
-            val request = header.lineSequence().first().split(' ')
-            require(request.size == 3 && request[0] == "CONNECT")
-            val supplied = header.lineSequence().firstOrNull { it.startsWith("Proxy-Authorization:", true) }
-                ?.substringAfter(':')?.trim()
-            if (supplied != authorization) {
-                client.getOutputStream().write("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"monitor\"\r\nContent-Length: 0\r\n\r\n".toByteArray())
-                return
-            }
-            val target = URI("https://${request[1]}")
-            val peer = connect(target.host, target.port)
-            remote = peer
-            client.getOutputStream().write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
-            client.soTimeout = 0
-            workers.execute {
-                try {
-                    val bytes = ByteArray(65536)
-                    while (true) {
-                        val count = input.read(bytes)
-                        if (count < 0) break
-                        if (closed.get()) break
-                        peer.write(bytes, count)
-                    }
-                } catch (_: Exception) { }
-                finally { closeConnections() }
-            }
-            val bytes = ByteArray(65536)
-            while (true) {
-                val count = peer.read(bytes)
-                if (count < 0) break
-                client.getOutputStream().write(bytes, 0, count)
-            }
-        } catch (_: Exception) {
-            if (remote == null) runCatching { client.getOutputStream().write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n".toByteArray()) }
-        } finally {
-            closeConnections()
-            clients.remove(client)
-            slots.release()
-        }
-    }
+    private val delegate = NonBlockingTunnel(object : NativeSocketIo {
+        override fun read(bytes: ByteArray): Int =
+            ZeroTierNative.zts_bsd_read(socket.nativeFileDescriptor, bytes)
+        override fun write(bytes: ByteArray, offset: Int, count: Int): Int =
+            ZeroTierNative.zts_bsd_write_offset(socket.nativeFileDescriptor, bytes, offset, count)
+        override fun close() = socket.close()
+    })
+    override fun read(bytes: ByteArray): Int = delegate.read(bytes)
+    override fun write(bytes: ByteArray, count: Int) = delegate.write(bytes, count)
+    override fun close() = delegate.close()
 }

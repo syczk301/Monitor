@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import kotlinx.coroutines.delay
 import java.io.IOException
+import java.io.FileDescriptor
 
 /** libzt creates native UDP sockets internally, so bind before starting the node. */
 internal class PhysicalNetworkRoute(context: Context) {
@@ -80,6 +81,16 @@ internal class PhysicalNetworkRoute(context: Context) {
             delay(100)
         }
         throw IOException(problem)
+    }
+
+    @Synchronized fun bindSocket(fd: FileDescriptor) {
+        val network = selected
+        if (!registered || network == null || problem != null) {
+            throw IOException(problem ?: "底层网络尚未连接")
+        }
+        // Per-socket binding is required for Go sockets: they bypass libc's
+        // bindProcessToNetwork hook. Fail instead of silently using a VPN.
+        network.bindSocket(fd)
     }
 
     @Synchronized fun close() {

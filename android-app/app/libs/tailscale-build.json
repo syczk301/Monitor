@@ -1,0 +1,20 @@
+{
+  "aar": "tailscale.aar",
+  "sha256": "b83f8b3f5edcfe44e9aa24b21a9b35e707cfe47d22a5a878bad80fef044f9cd7",
+  "go": "go version go1.27.3 windows/amd64",
+  "gomobile": "v0.0.0-20261011034528-197770444867",
+  "androidNdk": "28.2.13676358",
+  "androidApi": 26,
+  "abis": [
+    "x86_64",
+    "arm64-v8a",
+    "armeabi-v7a"
+  ],
+  "sourceSha256": {
+    "bridge.go": "cad2bee897617d61daab5a46e12c96e1ba436de5af904dcab341c5b3a20dc9c9",
+    "route_android.go": "6e6d0548fed308d99580c3e84cee269712de426fc8bdfea6f8cfd1394017cf80",
+    "route_other.go": "dc1f7195122619eacf5eba4d7f9e416ecc56d4dff702f192eb1c6cecd0f82b3e",
+    "go.mod": "8141411692a2ff0dbc27aace54704f0de4b6d20fb3a08f82b7d70d91c79b6c8e",
+    "go.sum": "ef1f209c95b28427fe1d0078fa9f7ee3b807fd7f34a776114644d9371e1ace86"
+  }
+}

@@ -136,6 +136,11 @@ fun MjpegView(
         val connectionAttempts = AtomicInteger()
         val lastStreamError = AtomicReference<String?>(null)
         val streamProtocol = AtomicReference("连接中")
+        val bodyProbe = com.monitor.intelligentflow.network.BodyReadProbe()
+        val tunnelProbe = AtomicReference<com.monitor.intelligentflow.network.TunnelProbe?>(null)
+        var previousBody = bodyProbe.snapshot()
+        var previousTunnel: com.monitor.intelligentflow.network.TunnelSnapshot? = null
+        var previousProbe: com.monitor.intelligentflow.network.TunnelProbe? = null
         val activeCall = AtomicReference<okhttp3.Call?>(null)
         val mainHandler = Handler(Looper.getMainLooper())
         val choreographer = Choreographer.getInstance()
@@ -167,11 +172,41 @@ fun MjpegView(
                     val decodedFps = decoded / seconds
                     val drawnFps = diagnosticRendered / seconds
                     val mbps = receivedBytes.getAndSet(0) * 8 / seconds / 1_000_000
+                    val body = bodyProbe.snapshot(now)
+                    val bodyMbps = (body.bytes - previousBody.bytes) * 8 / seconds / 1_000_000
+                    previousBody = body
+                    val probe = tunnelProbe.get()
+                    val tunnel = probe?.snapshot(now)
+                    val before = previousTunnel.takeIf { previousProbe === probe }
+                    val transportDetails = if (tunnel == null) "" else {
+                        val reads = (tunnel.readCalls - (before?.readCalls ?: 0)).coerceAtLeast(1)
+                        val writes = (tunnel.writeCalls - (before?.writeCalls ?: 0)).coerceAtLeast(1)
+                        val nativeBytes = tunnel.readBytes - (before?.readBytes ?: 0)
+                        val forwardedBytes = tunnel.writeBytes - (before?.writeBytes ?: 0)
+                        val readMs = (tunnel.readNanos - (before?.readNanos ?: 0)) / 1_000_000.0 / reads
+                        val writeMs = (tunnel.writeNanos - (before?.writeNanos ?: 0)) / 1_000_000.0 / writes
+                        val stage = when (tunnel.stage) {
+                            "native-read" -> "等待内置网络"
+                            "loopback-write" -> "向播放器转发"
+                            "closed" -> "已关闭"
+                            "connecting" -> "连接中"
+                            else -> "空闲"
+                        }
+                        "\n当前通道：内置 %.2f → 转发 %.2f Mbps\n原生读取 %.1f KB/次 · 等待 %.1f ms\n转发等待 %.1f ms · %s %.1f 秒"
+                            .format(nativeBytes * 8 / seconds / 1_000_000, forwardedBytes * 8 / seconds / 1_000_000,
+                                nativeBytes / 1024.0 / reads, readMs, writeMs, stage,
+                                maxOf(tunnel.readPendingNanos, tunnel.writePendingNanos) / 1_000_000_000.0) +
+                            (tunnel.lastFailure?.let { "\n通道结束原因：$it" } ?: "")
+                    }
+                    previousProbe = probe
+                    previousTunnel = tunnel
                     android.util.Log.d("MjpegPreview", "receivedFps=$receivedFps decodedFps=$decodedFps renderedFps=$drawnFps receivedMbps=$mbps decodeMs=$decodeMs decodeFailures=$failures")
                     diagnosticsCallback.value(
-                        "近 5 秒：接收 %.1f / 解码 %.1f / 绘制 %.1f FPS\n接收 %.2f Mbps · 解码 %.1f ms · 失败 %d 次"
+                        "近 5 秒：接收 %.1f / 解码 %.1f / 绘制 %.1f FPS\n完整帧 %.2f Mbps · 解码 %.1f ms · 失败 %d 次"
                             .format(receivedFps, decodedFps, drawnFps, mbps, decodeMs, failures)
                             + "\n视频连接：${streamProtocol.get()} · 重连 ${maxOf(0, connectionAttempts.get() - 1)} 次"
+                            + "\nHTTP 接收 %.2f Mbps · 当前等待 %.1f 秒".format(bodyMbps, body.pendingNanos / 1_000_000_000.0)
+                            + transportDetails
                             + (lastStreamError.get()?.let { "\n最近接收错误：$it" } ?: "")
                     )
                     diagnosticAt = now
@@ -203,6 +238,11 @@ fun MjpegView(
             val client = com.monitor.intelligentflow.network.EmbeddedTransport.streamClientBuilder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(10, TimeUnit.SECONDS)
+                .eventListener(object : okhttp3.EventListener() {
+                    override fun connectionAcquired(call: okhttp3.Call, connection: okhttp3.Connection) {
+                        tunnelProbe.set(com.monitor.intelligentflow.network.TunnelDiagnostics.find(connection.socket().localPort))
+                    }
+                })
                 .build()
             try {
                 while (running.get()) {
@@ -216,7 +256,7 @@ fun MjpegView(
                             check(response.isSuccessful) { "HTTP ${response.code}" }
                             streamProtocol.set(response.protocol.toString())
                             val body = response.body ?: throw EOFException("视频流为空")
-                            val input = BufferedInputStream(body.byteStream(), 64 * 1024)
+                            val input = BufferedInputStream(bodyProbe.wrap(body.byteStream()), 64 * 1024)
                             while (running.get()) {
                                 val data = readMjpegFrame(input) ?: throw EOFException("视频流已结束")
                                 receivedFrames.incrementAndGet()
